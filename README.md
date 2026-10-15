@@ -22,7 +22,7 @@ An experimental native reimplementation of *Crash Twinsanity* in Nim. The projec
 
 The renderer is at the foundation stage: it opens an 800 × 600 window, draws a rotating colored cube, and supports basic camera translation. It does not yet load Crash Twinsanity levels, models, textures, or other game assets.
 
-The research tools can inspect an ISO image directly. Current format work covers ISO9660 filesystems, `.BH`/`.BD` archive indexes, `.MH`/`.MB` tables, and `.RM2`/`.SM2` section, model, rigid-model reference, and bounded VIF command records, including candidate position and UV/color data and triangle-strip connectivity. Findings and open questions are tracked in [the asset investigation notes](docs/asset-investigation.md). Format labels taken from community tools are identified as their authors' classifications; observed facts and unresolved interpretations are kept separate.
+The research tools can inspect an ISO image directly. Current format work covers ISO9660 filesystems, `.BH`/`.BD` archive indexes, `.MH`/`.MB` tables, and `.RM2`/`.SM2` section, model, rigid-model reference, and bounded VIF command records, including candidate position, UV/color, normal, emissive-byte, and triangle-strip data. Findings and open questions are tracked in [the asset investigation notes](docs/asset-investigation.md). Format labels taken from community tools are identified as their authors' classifications; observed facts and unresolved interpretations are kept separate.
 
 ## Requirements
 
