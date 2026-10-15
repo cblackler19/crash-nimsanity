@@ -130,6 +130,21 @@ proc loadPreviewAssets(): PreviewAssets =
     except CatchableError as error:
       quit("Could not load ISO static-geometry preview: " & error.msg, 1)
     return
+  if paramStr(1) == "--chunk-links":
+    if paramCount() notin [3, 4]:
+      quit("Usage: main --chunk-links image.iso sm2-resource-path [depth]", 1)
+    let maxDepth = if paramCount() == 4:
+      parseIndex(paramStr(4), "Chunk-link depth") else: 1
+    try:
+      result.scene = loadLinkedChunkGeometryFromIso(paramStr(2), paramStr(3),
+        maxDepth)
+      result.showStaticGeometry = true
+      echo "Loaded ", result.scene.models.len,
+        " linked SM2 model items across up to ", maxDepth, " link levels"
+      echo "Neighbor transforms use the experimental ObjectMatrix interpretation"
+    except CatchableError as error:
+      quit("Could not load ISO chunk-link preview: " & error.msg, 1)
+    return
   if paramCount() == 3:
     let textureId = parseId(paramStr(3), "Texture ID")
     try:
@@ -147,7 +162,8 @@ proc loadPreviewAssets(): PreviewAssets =
       "main --model image.iso resource-path model-id [texture-id | " &
       "--candidate-material-order] | main --placements image.iso " &
       "resource-path outer-index nested-index [record-limit] | " &
-      "main --chunk image.iso sm2-resource-path", 1)
+      "main --chunk image.iso sm2-resource-path | " &
+      "main --chunk-links image.iso sm2-resource-path [depth]", 1)
 
   let modelId = parseId(paramStr(4), "Model ID")
   try:
@@ -340,7 +356,10 @@ proc main() =
   if preview.showPlacements or preview.showStaticGeometry:
     for sceneModel in preview.scene.models:
       sceneMeshes.add(uploadMesh(makeSceneVertices(sceneModel.model)))
-      sceneTextures.add(uploadTexture2D(sceneModel.texture))
+      if sceneModel.hasTexture:
+        sceneTextures.add(uploadTexture2D(sceneModel.texture))
+      else:
+        sceneTextures.add(Texture2D())
   elif preview.showModel:
     previewMesh = uploadMesh(makeModelVertices(preview.model))
   elif preview.showTexture:
@@ -442,10 +461,15 @@ proc main() =
     elif preview.showStaticGeometry:
       let centerTransform = translationMatrix(-preview.scene.center[0],
         -preview.scene.center[1], -preview.scene.center[2])
-      glUniformMatrix4fv(modelLocation, 1, GLboolean(0),
-        centerTransform[0].addr)
       for modelIndex in 0 ..< preview.scene.models.len:
-        sceneTextures[modelIndex].bindTexture()
+        let sceneModel = preview.scene.models[modelIndex]
+        let transform = multiply(centerTransform,
+          sceneModel.modelTransform)
+        glUniformMatrix4fv(modelLocation, 1, GLboolean(0), transform[0].addr)
+        glUniform1i(useTextureLocation,
+          GLint(if sceneModel.hasTexture: 1 else: 0))
+        if sceneModel.hasTexture:
+          sceneTextures[modelIndex].bindTexture()
         sceneMeshes[modelIndex].draw()
     else:
       glUniformMatrix4fv(modelLocation, 1, GLboolean(0), model[0].addr)
