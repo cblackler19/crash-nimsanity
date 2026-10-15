@@ -88,7 +88,7 @@ proc makeWav(left, right: openArray[int16], sampleRate: uint32): seq[uint8] =
     result.appendU16LE(cast[uint16](right[index]))
 
 proc exportRecord(imagePath: string, recordIndex: int, outputPath: string,
-    blocksPerChannelChunk: int, sampleRateOverride: uint32) =
+    trackChunkBytesOverride: int, sampleRateOverride: uint32) =
   let image = openIso(imagePath)
   defer: image.close()
 
@@ -106,33 +106,46 @@ proc exportRecord(imagePath: string, recordIndex: int, outputPath: string,
   let byteLength = int(readU32LE(headerData, recordBase + 4))
   let byteOffset = readU32LE(headerData, recordBase + 8)
   let tableSampleRate = readU32LE(headerData, recordBase + 12)
+  let trackEndOffset = int(readU32LE(headerData, recordBase + 16))
+  let tableTrackChunkBytes = int(readU32LE(headerData, 4))
   let sampleRate = if sampleRateOverride > 0: sampleRateOverride else: tableSampleRate
-  if blocksPerChannelChunk <= 0:
-    raise newException(IOError, "Channel chunk size must be a positive block count")
-  let channelChunkBytes = BlockSize * blocksPerChannelChunk
-  if byteLength mod (channelChunkBytes * 2) != 0:
-    raise newException(IOError, "Type-1 range is not a whole number of stereo channel chunks")
+  let trackChunkBytes = if trackChunkBytesOverride > 0:
+    trackChunkBytesOverride
+  else:
+    tableTrackChunkBytes
+  if trackChunkBytes <= 0 or trackChunkBytes mod BlockSize != 0:
+    raise newException(IOError, "Track chunk size must be a positive multiple of 16 bytes")
+  if byteLength mod (trackChunkBytes * 2) != 0:
+    raise newException(IOError, "Type-1 range is not a whole number of paired track chunks")
+  if trackEndOffset <= 0 or trackEndOffset > trackChunkBytes or
+      trackEndOffset mod BlockSize != 0:
+    raise newException(IOError,
+      "MUSIC.MH track end offset must be a positive, block-aligned size within the track chunk")
   if sampleRate < 8000 or sampleRate > 96000:
     raise newException(IOError, "Candidate sample rate must be between 8 kHz and 96 kHz")
 
   let encoded = image.readSlice(payload, int64(byteOffset), byteLength)
-  let samplesPerChannel = byteLength div (BlockSize * 2) * SamplesPerBlock
+  let trackPairCount = byteLength div (trackChunkBytes * 2)
+  let samplesPerChannel = ((trackPairCount - 1) * trackChunkBytes +
+    trackEndOffset) div BlockSize * SamplesPerBlock
   var leftSamples = newSeqOfCap[int16](samplesPerChannel)
   var rightSamples = newSeqOfCap[int16](samplesPerChannel)
   var leftPreviousOne = 0
   var leftPreviousTwo = 0
   var rightPreviousOne = 0
   var rightPreviousTwo = 0
-  let stereoChunkBytes = channelChunkBytes * 2
+  let stereoChunkBytes = trackChunkBytes * 2
   for pairOffset in countup(0, encoded.len - stereoChunkBytes, stereoChunkBytes):
+    let isFinalPair = pairOffset == encoded.len - stereoChunkBytes
+    let validTrackBytes = if isFinalPair: trackEndOffset else: trackChunkBytes
     for blockOffset in countup(pairOffset,
-        pairOffset + channelChunkBytes - BlockSize, BlockSize):
+        pairOffset + validTrackBytes - BlockSize, BlockSize):
       let leftBlock = decodeBlock(encoded.toOpenArray(blockOffset,
         blockOffset + BlockSize - 1), leftPreviousOne, leftPreviousTwo)
       for sample in leftBlock:
         leftSamples.add(sample)
-    for blockOffset in countup(pairOffset + channelChunkBytes,
-        pairOffset + stereoChunkBytes - BlockSize, BlockSize):
+    for blockOffset in countup(pairOffset + trackChunkBytes,
+        pairOffset + trackChunkBytes + validTrackBytes - BlockSize, BlockSize):
       let rightBlock = decodeBlock(encoded.toOpenArray(blockOffset,
         blockOffset + BlockSize - 1), rightPreviousOne, rightPreviousTwo)
       for sample in rightBlock:
@@ -142,23 +155,26 @@ proc exportRecord(imagePath: string, recordIndex: int, outputPath: string,
   writeFile(outputPath, cast[string](wav))
   echo "Record ", recordIndex, ": ", byteLength, " encoded bytes, ",
     leftSamples.len, " stereo sample frames at ", sampleRate, " Hz"
-  echo "Wrote candidate stereo PSX ADPCM decode to ", outputPath
-  echo "Channel chunk size: ", channelChunkBytes, " bytes; each channel's predictor resets at the record boundary."
+  echo "Wrote candidate two-track interleaved PSX ADPCM decode to ", outputPath
+  echo "Track chunk size: ", trackChunkBytes, " bytes",
+    if trackChunkBytesOverride > 0: " (override)" else: " (from MUSIC.MH header)"
+  echo "Final track chunk: ", trackEndOffset, " valid bytes per track (from MUSIC.MH +16)."
+  echo "Track 0 is left; track 1 is right. Predictor history resets at the record boundary."
 
 proc main() =
   if paramCount() notin 2 .. 5:
-    quit("Usage: mh_audio_export <image.iso> <type-1-record-index> [output.wav] [channel-chunk-blocks] [sample-rate]", 1)
+    quit("Usage: mh_audio_export <image.iso> <type-1-record-index> [output.wav] [track-chunk-bytes] [sample-rate]", 1)
 
   let outputPath = if paramCount() >= 3: paramStr(3) else:
     "music-record-" & paramStr(2) & ".wav"
-  let blocksPerChannelChunk = if paramCount() >= 4: parseInt(paramStr(4)) else: 128
+  let trackChunkBytesOverride = if paramCount() >= 4: parseInt(paramStr(4)) else: 0
   let sampleRateOverride = if paramCount() == 5:
     uint32(parseInt(paramStr(5)))
   else:
     0'u32
   try:
     exportRecord(paramStr(1), parseInt(paramStr(2)), outputPath,
-      blocksPerChannelChunk, sampleRateOverride)
+      trackChunkBytesOverride, sampleRateOverride)
   except CatchableError as error:
     quit(error.msg, 1)
 
