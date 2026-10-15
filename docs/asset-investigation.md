@@ -39,7 +39,9 @@ In `MUSIC.MH`, records 7 through 10 have word 0 equal to `1`. Their word 2 value
 
 ## `.BH` / `.BD` and executable clues
 
-`CRASH.BH` begins with the little-endian word `1281`; its meaning is not identified. After that word, the file parses exactly into 612 variable-length entries. Each entry contains a little-endian path byte length, that many path bytes, a little-endian data offset, and a little-endian data length. The entries consume the index to EOF. In table order, every data offset equals the prior range's end, starting at byte zero, and the final range ends at byte `890464828`, exactly the length of `CRASH.BD`.
+`CRASH.BH` begins with the little-endian word `1281` (`0x501`). After that word, the file parses exactly into 612 variable-length entries. Each entry contains a little-endian path byte length, that many path bytes, a little-endian data offset, and a little-endian data length. The entries consume the index to EOF. In table order, every data offset equals the prior range's end, starting at byte zero, and the final range ends at byte `890464828`, exactly the length of `CRASH.BD`.
+
+The independent `BDArchive.cs` reader and writer in Twinsanity Editor call the leading word a magic value and write `0x501` when rebuilding an archive. Its reader likewise consumes each name-length/name/offset/size record and seeks to that offset in the paired `.BD`. This corroborates the layout found above and identifies `0x501` as the editor's archive header value; the interpretation is cross-checked against this project's own ISO data rather than copied code.
 
 The read-only Nim utility [`bh_inspect.nim`](../tools/bh_inspect.nim) parses this layout, reports each path and range, and can check that ranges stay within a supplied `.BD` file. The data image itself was not extracted. `CRASH.BD` begins with `03 00 00 00`; this alone does not identify its internal format.
 
@@ -57,3 +59,9 @@ These call-site observations are consistent with the `.BH` index and `.BD` data 
 
 - Inspect the `MSVp` header and music type-1 payload structure further, keeping the observed range associations separate from field semantics.
 - Trace how the paired-name object and registry result are consumed after lookup, and determine whether that path reaches file access.
+
+## Community references and licensing
+
+- Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/BDArchive.cs`. The repository is MIT-licensed. Its archive reader/writer is used here as an attributed format cross-check only; no source code was copied or adapted. If MIT-licensed code is reused from this project later, retain the MIT copyright and permission notice for that code when distributing the ISC-licensed project.
+- Knuxfan24, [KnuxLib](https://github.com/Knuxfan24/KnuxLib). Its MIT-licensed format list independently records `.BD`/`.BH` as a Crash Twinsanity archive pair. It is a possible comparison source for later parser work; no code was used here.
+- Smartkin, [twinsanity-reversed](https://github.com/Smartkin/twinsanity-reversed), is a PAL executable decompilation project with relevant reverse-engineering material. Its repository currently lists no license file, so its code is not being incorporated into this ISC project.
