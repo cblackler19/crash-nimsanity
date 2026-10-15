@@ -22,7 +22,7 @@ An experimental native reimplementation of *Crash Twinsanity* in Nim. The projec
 
 The renderer opens an 800 × 600 window, draws a rotating colored cube, and supports basic camera translation. It can also read a PSMT8 texture and its mip levels directly from a user-supplied ISO, then preview either that texture or a selected model item on a rotating textured mesh. Full level geometry, game-accurate material assignment and shader behavior, and game rendering are not integrated yet.
 
-The research tools can inspect an ISO image directly. Current format work covers ISO9660 filesystems, `.BH`/`.BD` archive indexes, `.MH`/`.MB` tables, and `.RM2`/`.SM2` sections, texture and material links, bounded VIF commands, and decoded model positions, UV/color attributes, and candidate triangle strips. In the Cavern samples, all parsed shader texture IDs and rigid-model material links resolve to sibling records. A Nim PSMT8 decoder converts all 75 Cavern textures and their mip levels into RGBA in memory, and the renderer can preview selected textures and model items directly from the ISO. The model inspector lists every resolving material/texture pair for an item. The default model preview uses the first pair; an explicitly experimental mode applies material links to submodels in list order when their counts match. The initial Crash model preview was recognized by the user as the spinning Crash model, a useful visual check that does not establish the mapping for all models. One decoded base texture has also been visually reviewed. Findings and open questions are tracked in [the asset investigation notes](docs/asset-investigation.md). Format labels taken from community tools are identified as their authors' classifications; observed facts and unresolved interpretations are kept separate.
+The research tools can inspect an ISO image directly. Current format work covers ISO9660 filesystems, `.BH`/`.BD` archive indexes, `.MH`/`.MB` tables, and `.RM2`/`.SM2` sections, texture and material links, bounded VIF commands, and decoded model positions, normals, UV/color attributes, emissive-color candidates, and triangle strips. Music record 7 now decodes using the 64 KiB two-track interleave and end offset inferred from `MUSIC.MH`; the user confirmed that the generated WAV sounds identical to the retail game. The relevant playback setup was cross-referenced with Smartkin's `twinsanity-reversed` decompilation, with attribution and licensing limits documented below. In the Cavern samples, all parsed shader texture IDs and rigid-model material links resolve to sibling records. A Nim PSMT8 decoder converts all 75 Cavern textures and their mip levels into RGBA in memory, and the renderer can preview selected textures and model items directly from the ISO. The model inspector lists every resolving material/texture pair and reports normal/emissive attribute coverage for an item. The default model preview uses the first pair; an explicitly experimental mode applies material links to submodels in list order when their counts match. The initial Crash model preview was recognized by the user as the spinning Crash model, a useful visual check that does not establish the mapping for all models. One decoded base texture has also been visually reviewed. Findings and open questions are tracked in [the asset investigation notes](docs/asset-investigation.md). Format labels taken from community tools are identified as their authors' classifications; observed facts and unresolved interpretations are kept separate.
 
 ## Requirements
 
@@ -63,13 +63,13 @@ nim c --path:src --out:tools/mh_audio_export tools/mh_audio_export.nim
 tools/mh_audio_export /path/to/Crash-Twinsanity.iso 7 candidate.wav
 ```
 
-The exporter reads the two-track interleave size from the second `MUSIC.MH` header word (65,536 bytes per track chunk in the inspected disc) and uses each record's rate and final-track end offset. It writes track 0 to the left channel and track 1 to the right as a listening candidate. The game-side source suggests that mapping when stereo music is enabled, but the current NTSC-U executable has not yet been checked and the resulting audio still needs listening validation. An optional track-chunk size in bytes and sample-rate override are available for diagnosis. The earlier 0x800-byte hypothesis was rejected by listening feedback. For example, override the chunk size with 32,768 bytes and the rate with 16 kHz:
+The exporter reads the two-track interleave size from the second `MUSIC.MH` header word (65,536 bytes per track chunk in the inspected disc) and uses each record's rate and final-track end offset. It writes track 0 to the left channel and track 1 to the right. The user confirmed that record 7's generated WAV sounds identical to the retail game; see the research notes for the `twinsanity-reversed` attribution and earlier rejected hypotheses. An optional track-chunk size in bytes and sample-rate override are available for diagnosis. For example, override the chunk size with 32,768 bytes and the rate with 16 kHz:
 
 ```sh
 tools/mh_audio_export /path/to/Crash-Twinsanity.iso 7 candidate-16k.wav 32768 16000
 ```
 
-The two-track layout and rate fields are supported by the PAL game-side source, but their NTSC-U behavior and the audible result remain under investigation; see [the asset investigation notes](docs/asset-investigation.md).
+The two-track layout and end offset match the user's retail-game listening comparison for record 7. Other music records have not yet been individually compared.
 
 The repository includes these utilities:
 
@@ -77,7 +77,7 @@ The repository includes these utilities:
 | --- | --- |
 | `iso9660_inspect` | List ISO9660 directories or print a bounded hexadecimal file range. |
 | `bh_inspect` | Parse a `.BH` archive index and optionally check its ranges against the paired `.BD`. |
-| `mh_inspect` | Compare `.MH` records with candidate ranges in the paired `.MB`. |
+| `mh_inspect` | Compare `.MH` records with candidate ranges in the paired `.MB`, including type-1 track-pair and end-offset checks. |
 | `mh_audio_export` | Decode candidate two-track interleaved type-1 `MUSIC.MH` ranges, writing WAV directly from ISO data. |
 | `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, decode PSMT8 textures and mip levels, check model-item VIF decoding coverage and linked material/submodel count agreement, inspect material/rigid-model records, and scan VIF blocks. |
 | `texture_inspect` | Load one PSMT8 texture and its mip levels through an ISO's `.BH`/`.BD` archive without extracting the resource. |
@@ -158,6 +158,7 @@ Game images, executables, and extracted assets are not part of this repository. 
 - [KnuxLib](https://github.com/Knuxfan24/KnuxLib), by Knuxfan24, is MIT licensed and independently recognizes the `.BH`/`.BD` archive pairing. It was used as a format reference; no code was copied.
 - [vgmstream](https://github.com/vgmstream/vgmstream), by its contributors and licensed under ISC, provided a reference interpretation for the `MSVp` music headers; no code was copied.
 - [FFmpeg](https://github.com/FFmpeg/FFmpeg) provided references for the PSX ADPCM block-header scan and diagnostic decoder; no code was copied.
+- Smartkin, [twinsanity-reversed](https://github.com/Smartkin/twinsanity-reversed), especially `src/game/sound.cpp`, `src/platform/ps2/audio.cpp`, and `src/platform/ps2/multistream/commands.cpp`, informed the music interleave, track setup, pitch, and end-offset analysis. The user confirmed the resulting record-7 WAV against retail gameplay. No source was copied; the repository's visible root has no license file, so it is credited as a research reference only.
 - The full source list, attributions, and research limitations are maintained in [the asset investigation notes](docs/asset-investigation.md).
 
 ## License
