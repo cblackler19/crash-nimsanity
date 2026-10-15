@@ -73,6 +73,7 @@ type PreviewAssets = object
   showModel: bool
   useCandidateMaterialOrder: bool
   showStaticGeometry: bool
+  selectedSubmodelIndex: int
   modelId: uint32
   materialId: uint32
   textureId: uint32
@@ -133,13 +134,17 @@ proc loadPreviewAssets(): PreviewAssets =
       quit("Could not load ISO static-geometry preview: " & error.msg, 1)
     return
   if paramStr(1) == "--chunk-links":
-    if paramCount() notin [3, 4]:
-      quit("Usage: main --chunk-links image.iso sm2-resource-path [depth]", 1)
-    let maxDepth = if paramCount() == 4:
+    if paramCount() notin [3, 4, 5]:
+      quit("Usage: main --chunk-links image.iso sm2-resource-path " &
+        "[depth [object|chunk]]", 1)
+    let maxDepth = if paramCount() >= 4:
       parseIndex(paramStr(4), "Chunk-link depth") else: 1
+    let useChunkMatrix = paramCount() == 5 and paramStr(5) == "chunk"
+    if paramCount() == 5 and paramStr(5) notin ["object", "chunk"]:
+      quit("Chunk-link matrix must be 'object' or 'chunk'", 1)
     try:
       result.scene = loadLinkedChunkGeometryFromIso(paramStr(2), paramStr(3),
-        maxDepth)
+        maxDepth, useChunkMatrix)
       result.showStaticGeometry = true
       result.showPlacements = result.scene.placements.len > 0
       var staticModelCount = 0
@@ -152,7 +157,9 @@ proc loadPreviewAssets(): PreviewAssets =
         " RM2 placement-model variants (deduplicated per resource)"
       echo "Loaded ", result.scene.placements.len,
         " linked RM2 object model instances"
-      echo "Neighbor transforms use the experimental ObjectMatrix interpretation"
+      echo "Neighbor transforms use the experimental ",
+        (if useChunkMatrix: "ChunkMatrix" else: "ObjectMatrix"),
+        " interpretation"
     except CatchableError as error:
       quit("Could not load ISO chunk-link preview: " & error.msg, 1)
     return
@@ -164,21 +171,32 @@ proc loadPreviewAssets(): PreviewAssets =
     except CatchableError as error:
       quit("Could not load ISO texture: " & error.msg, 1)
     return
-  let useCandidateMaterialOrder = paramCount() == 5 and
+  let useCandidateMaterialOrder = paramCount() in [5, 7] and
     paramStr(5) == "--candidate-material-order"
-  if (paramCount() notin [4, 5] or
-      (paramCount() == 5 and not useCandidateMaterialOrder)) or
+  let useSelectedSubmodel = (paramCount() == 6 and paramStr(5) == "--submodel") or
+    (paramCount() == 7 and paramStr(6) == "--submodel")
+  if (paramCount() notin [4, 5, 6, 7] or
+      (paramCount() == 6 and not useSelectedSubmodel) or
+      (paramCount() == 7 and not useSelectedSubmodel)) or
       paramStr(1) != "--model":
     quit("Usage: main [image.iso resource-path texture-id] | " &
       "main --model image.iso resource-path model-id [texture-id | " &
-      "--candidate-material-order] | main --placements image.iso " &
+      "--candidate-material-order] [--submodel index] | " &
+      "main --placements image.iso " &
       "resource-path outer-index nested-index [record-limit] | " &
       "main --chunk image.iso sm2-resource-path | " &
-      "main --chunk-links image.iso sm2-resource-path [depth]", 1)
+      "main --chunk-links image.iso sm2-resource-path " &
+      "[depth [object|chunk]]", 1)
 
   let modelId = parseId(paramStr(4), "Model ID")
+  let selectedSubmodelIndex = if useSelectedSubmodel:
+    parseIndex(paramStr(if paramCount() == 7: 7 else: 6), "Submodel index")
+    else: -1
   try:
     result.model = loadModelFromIso(paramStr(2), paramStr(3), modelId)
+    if selectedSubmodelIndex >= result.model.submodelCount:
+      raise newException(ValueError, "Submodel index is out of range")
+    result.selectedSubmodelIndex = selectedSubmodelIndex
     if useCandidateMaterialOrder:
       # The format reference does not confirm parallel list ordering; keep this
       # path opt-in so the candidate mapping can be inspected without assuming it.
@@ -199,7 +217,7 @@ proc loadPreviewAssets(): PreviewAssets =
       return
 
     var textureId: uint32
-    if paramCount() == 5:
+    if paramCount() in [5, 7] and not useCandidateMaterialOrder:
       textureId = parseId(paramStr(5), "Texture ID")
     else:
       let link = findTextureForModelFromIso(paramStr(2), paramStr(3), modelId)
@@ -320,6 +338,8 @@ proc main() =
     "crash-nimsanity - experimental SM2 geometry preview"
   elif preview.showModel and preview.useCandidateMaterialOrder:
     "crash-nimsanity - candidate material preview"
+  elif preview.showModel and preview.selectedSubmodelIndex >= 0:
+    "crash-nimsanity - ISO submodel preview"
   elif preview.showModel:
     "crash-nimsanity - ISO model preview"
   elif preview.showTexture:
@@ -501,15 +521,30 @@ proc main() =
         preview.showTexture:
       glUniform1i(textureLocation, 0)
       if preview.useCandidateMaterialOrder:
-        for submodelIndex, texture in candidateTextures:
-          texture.bindTexture()
+        if preview.selectedSubmodelIndex >= 0:
+          let submodelIndex = preview.selectedSubmodelIndex
+          candidateTextures[submodelIndex].bindTexture()
           previewMesh.drawRange(
             preview.model.submodelTriangleVertexOffsets[submodelIndex],
             preview.model.submodelTriangleCounts[submodelIndex] * 3
           )
+        else:
+          for submodelIndex, texture in candidateTextures:
+            texture.bindTexture()
+            previewMesh.drawRange(
+              preview.model.submodelTriangleVertexOffsets[submodelIndex],
+              preview.model.submodelTriangleCounts[submodelIndex] * 3
+            )
       else:
         previewTexture.bindTexture()
-        previewMesh.draw()
+        if preview.selectedSubmodelIndex >= 0:
+          let submodelIndex = preview.selectedSubmodelIndex
+          previewMesh.drawRange(
+            preview.model.submodelTriangleVertexOffsets[submodelIndex],
+            preview.model.submodelTriangleCounts[submodelIndex] * 3
+          )
+        else:
+          previewMesh.draw()
     elif not preview.showPlacements and not preview.showStaticGeometry:
       previewMesh.draw()
 
