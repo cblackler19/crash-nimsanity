@@ -68,6 +68,9 @@ void main() {
 type PreviewAssets = object
   showTexture: bool
   showModel: bool
+  modelId: uint32
+  materialId: uint32
+  textureId: uint32
   texture: DecodedTexture
   model: DecodedModel
 
@@ -91,15 +94,24 @@ proc loadPreviewAssets(): PreviewAssets =
     except CatchableError as error:
       quit("Could not load ISO texture: " & error.msg, 1)
     return
-  if paramCount() != 5 or paramStr(1) != "--model":
+  if paramCount() notin [4, 5] or paramStr(1) != "--model":
     quit("Usage: main [image.iso resource-path texture-id] | " &
-      "main --model image.iso resource-path model-id texture-id", 1)
+      "main --model image.iso resource-path model-id [texture-id]", 1)
 
   let modelId = parseId(paramStr(4), "Model ID")
-  let textureId = parseId(paramStr(5), "Texture ID")
   try:
     result.model = loadModelFromIso(paramStr(2), paramStr(3), modelId)
+    var textureId: uint32
+    if paramCount() == 5:
+      textureId = parseId(paramStr(5), "Texture ID")
+    else:
+      let link = findTextureForModelFromIso(paramStr(2), paramStr(3), modelId)
+      result.materialId = link.materialId
+      textureId = link.textureId
+      echo "Linked material ", link.materialId, " to texture ", link.textureId
     result.texture = loadTextureFromIso(paramStr(2), paramStr(3), textureId)
+    result.modelId = modelId
+    result.textureId = textureId
     result.showModel = true
     result.showTexture = true
   except CatchableError as error:
