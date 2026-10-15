@@ -770,6 +770,57 @@ proc collectSectionItemIds(sectionData: openArray[uint8],
       raise newException(IOError, "Model item range extends beyond its section")
     result.incl(itemId)
 
+proc collectGameObjectGraphicsInfoIds(sectionData: openArray[uint8],
+    sectionLength: uint32): Table[uint32, seq[uint16]] =
+  if sectionData.len < 12:
+    raise newException(IOError, "Game-object section is shorter than its header")
+
+  let itemCount = readU32LE(sectionData, 4)
+  let tableLength = 12'u64 + uint64(itemCount) * 12'u64
+  if tableLength > uint64(sectionData.len) or
+      tableLength > uint64(sectionLength):
+    raise newException(IOError, "Game-object table extends beyond its section")
+
+  result = initTable[uint32, seq[uint16]]()
+  for itemIndex in 0 ..< int(itemCount):
+    let entryOffset = 12 + itemIndex * 12
+    let itemOffset = readU32LE(sectionData, entryOffset)
+    let itemLength = readU32LE(sectionData, entryOffset + 4)
+    let itemId = readU32LE(sectionData, entryOffset + 8)
+    let itemEnd = uint64(itemOffset) + uint64(itemLength)
+    if itemOffset < tableLength or itemEnd > uint64(sectionLength) or
+        itemEnd > uint64(sectionData.len) or itemLength < 20:
+      raise newException(IOError, "Game-object record range is malformed")
+
+    let limit = int(itemEnd)
+    var cursor = int(itemOffset) + 12
+    if cursor > limit - 4:
+      raise newException(IOError, "Game-object name length is truncated")
+    let nameLength = readU32LE(sectionData, cursor)
+    cursor += 4
+    if uint64(nameLength) > uint64(limit - cursor):
+      raise newException(IOError, "Game-object name exceeds its record")
+    cursor += int(nameLength)
+
+    if cursor > limit - 4:
+      raise newException(IOError, "Game-object integer-list count is truncated")
+    let scriptValueCount = readU32LE(sectionData, cursor)
+    cursor += 4
+    if uint64(scriptValueCount) > uint64((limit - cursor) div 4):
+      raise newException(IOError, "Game-object integer list exceeds its record")
+    cursor += int(scriptValueCount) * 4
+    if cursor > limit - 4:
+      raise newException(IOError, "Game-object graphics list is truncated")
+    let graphicsInfoCount = readU32LE(sectionData, cursor)
+    cursor += 4
+    if uint64(graphicsInfoCount) > uint64((limit - cursor) div 2):
+      raise newException(IOError, "Game-object graphics list exceeds its record")
+
+    var graphicsInfoIds: seq[uint16]
+    for linkIndex in 0 ..< int(graphicsInfoCount):
+      graphicsInfoIds.add(readU16LE(sectionData, cursor + linkIndex * 2))
+    result[itemId] = graphicsInfoIds
+
 proc collectRigidMaterialCounts(sectionData: openArray[uint8],
     sectionLength: uint32): Table[uint32, uint32] =
   if sectionData.len < 12:
@@ -1066,6 +1117,129 @@ proc inspectMaterialItems(sectionData: openArray[uint8], sectionLength: uint32,
     if count > 0:
       echo "  ", shaderType, ": ", count
 
+proc skipInstanceReferenceList(data: openArray[uint8], cursor: var int,
+    limit: int): int =
+  if cursor < 0 or cursor > limit - 12:
+    raise newException(IOError, "Instance reference-list header is truncated")
+
+  let declaredCount = readU32LE(data, cursor)
+  let storedCount = readU32LE(data, cursor + 4)
+  cursor += 12
+  if declaredCount != storedCount:
+    raise newException(IOError, "Instance reference-list counts disagree")
+  if uint64(storedCount) > uint64((limit - cursor) div 2):
+    raise newException(IOError, "Instance reference list exceeds its record")
+
+  result = int(storedCount)
+  cursor += result * 2
+
+proc skipInstanceWordList(data: openArray[uint8], cursor: var int,
+    limit: int): int =
+  if cursor < 0 or cursor > limit - 4:
+    raise newException(IOError, "Instance property-list header is truncated")
+  let count = readU32LE(data, cursor)
+  cursor += 4
+  if uint64(count) > uint64((limit - cursor) div 4):
+    raise newException(IOError, "Instance property list exceeds its record")
+  result = int(count)
+  cursor += result * 4
+
+proc inspectObjectInstances(sectionData: openArray[uint8],
+    sectionLength: uint32, objectDefinitionIds: HashSet[uint32],
+    objectGraphicsInfoIds: Table[uint32, seq[uint16]],
+    graphicsInfoIds: HashSet[uint32]) =
+  if sectionData.len < 12:
+    raise newException(IOError, "Object-instance section is shorter than its header")
+
+  let itemCount = readU32LE(sectionData, 4)
+  let tableLength = 12'u64 + uint64(itemCount) * 12'u64
+  if tableLength > uint64(sectionData.len) or
+      tableLength > uint64(sectionLength):
+    raise newException(IOError, "Object-instance table extends beyond its section")
+
+  var totalReferences = 0'u64
+  var recordsEndingAtBoundary = 0'u64
+  var invalidPositions = 0'u64
+  var resolvedObjectIds = 0'u64
+  var totalGraphicsInfoLinks = 0'u64
+  var resolvedGraphicsInfoLinks = 0'u64
+  echo "Object-instance records: ", itemCount
+  for itemIndex in 0 ..< int(itemCount):
+    let entryOffset = 12 + itemIndex * 12
+    let itemOffset = readU32LE(sectionData, entryOffset)
+    let itemLength = readU32LE(sectionData, entryOffset + 4)
+    let itemId = readU32LE(sectionData, entryOffset + 8)
+    let itemEnd = uint64(itemOffset) + uint64(itemLength)
+    if itemOffset < tableLength or itemEnd > uint64(sectionLength) or
+        itemEnd > uint64(sectionData.len) or itemLength < 28:
+      raise newException(IOError, "Object-instance record range is malformed")
+
+    let start = int(itemOffset)
+    let limit = start + int(itemLength)
+    var position: array[4, float32]
+    for component in 0 .. 3:
+      position[component] = cast[float32](readU32LE(sectionData,
+        start + component * 4))
+    var rotations: array[6, uint16]
+    for component in 0 .. 5:
+      rotations[component] = readU16LE(sectionData, start + 16 + component * 2)
+
+    var cursor = start + 28
+    let instanceReferences = skipInstanceReferenceList(sectionData, cursor, limit)
+    let positionReferences = skipInstanceReferenceList(sectionData, cursor, limit)
+    let pathReferences = skipInstanceReferenceList(sectionData, cursor, limit)
+    if cursor > limit - 10:
+      raise newException(IOError, "Object-instance identity fields are truncated")
+    let objectId = readU16LE(sectionData, cursor)
+    let objectDefinitionResolves = objectId in objectDefinitionIds
+    if objectDefinitionResolves:
+      inc resolvedObjectIds
+    let linkedGraphicsInfoIds = objectGraphicsInfoIds.getOrDefault(objectId,
+      @[])
+    var allGraphicsInfoLinksResolve = true
+    for graphicsInfoId in linkedGraphicsInfoIds:
+      inc totalGraphicsInfoLinks
+      if graphicsInfoId in graphicsInfoIds:
+        inc resolvedGraphicsInfoLinks
+      else:
+        allGraphicsInfoLinksResolve = false
+    cursor += 6
+    cursor += 4
+    let flags = readU32LE(sectionData, cursor)
+    cursor += 4
+
+    let integerProperties = skipInstanceWordList(sectionData, cursor, limit)
+    let floatProperties = skipInstanceWordList(sectionData, cursor, limit)
+    let extraProperties = skipInstanceWordList(sectionData, cursor, limit)
+    if cursor == limit:
+      inc recordsEndingAtBoundary
+
+    if position[0] != position[0] or position[1] != position[1] or
+        position[2] != position[2] or position[3] != position[3]:
+      inc invalidPositions
+    totalReferences += uint64(instanceReferences + positionReferences +
+      pathReferences)
+    echo "  record ", itemIndex, " id=", itemId, " object=", objectId,
+      " definition-resolves=", objectDefinitionResolves,
+      " ogi-count=", linkedGraphicsInfoIds.len,
+      " ogis-resolve=", allGraphicsInfoLinksResolve,
+      " position=", position[0 .. 2], " rotations=", rotations,
+      " ref-lists=", instanceReferences, "/", positionReferences, "/",
+      pathReferences, " flags=0x", toHex(flags, 8), " properties=",
+      integerProperties, "/", floatProperties, "/", extraProperties
+
+  echo "Records decoded through declared fields: ", recordsEndingAtBoundary,
+    " / ", itemCount
+  echo "Position vectors with NaN components: ", invalidPositions
+  echo "Linked IDs across the three reference lists: ", totalReferences
+  if objectDefinitionIds.len > 0:
+    echo "Object IDs resolving in the sibling Code/Object table: ",
+      resolvedObjectIds, " / ", itemCount
+  else:
+    echo "Sibling Code/Object table was unavailable for this resource."
+  echo "Object graphics-info links resolving in sibling Code/OGI table: ",
+    resolvedGraphicsInfoLinks, " / ", totalGraphicsInfoLinks
+
 proc readSectionTable(image: IsoImage, dataFile: IsoEntry, offset: int64,
     sectionLength: uint32): seq[uint8] =
   let fixedLength = int(min(sectionLength, 12'u32))
@@ -1113,6 +1287,22 @@ proc inspectIsoResource(imagePath, requestedPath: string, outerSectionIndex,
       raise newException(IOError, "Outer section index is out of range")
     let section = sections[outerSectionIndex]
     let sectionOffset = resourceOffset + int64(section.offset)
+    if paramCount() == 6:
+      if paramStr(4) != "--hex":
+        raise newException(IOError, "Expected --hex before the requested byte range")
+      var hexOffset, hexByteCount: int
+      try:
+        hexOffset = parseInt(paramStr(5))
+        hexByteCount = parseInt(paramStr(6))
+      except ValueError:
+        raise newException(IOError, "Hex range offset and size must be integers")
+      let sectionData = image.readSlice(dataFile, sectionOffset,
+        int(section.byteLength))
+      echo "Payload for outer section index ", outerSectionIndex,
+        " (id=", section.id, ", bytes=", section.byteLength, ")"
+      dumpHexRange(sectionData, hexOffset, hexByteCount)
+      return
+
     let nestedHeader = readSectionTable(
       image, dataFile, sectionOffset, section.byteLength
     )
@@ -1181,13 +1371,42 @@ proc inspectIsoResource(imagePath, requestedPath: string, outerSectionIndex,
             break
         discard inspectMaterialItems(childData, childSection.byteLength,
           textureIds)
+      elif section.id <= 7 and childSection.id == 6:
+        var objectDefinitionIds = initHashSet[uint32]()
+        var objectGraphicsInfoIds = initTable[uint32, seq[uint16]]()
+        var graphicsInfoIds = initHashSet[uint32]()
+        for codeSection in sections:
+          if codeSection.id == 10:
+            let codeOffset = resourceOffset + int64(codeSection.offset)
+            let codeHeader = readSectionTable(image, dataFile, codeOffset,
+              codeSection.byteLength)
+            let codeCount = readU32LE(codeHeader, 4)
+            for codeIndex in 0 ..< int(codeCount):
+              let entryOffset = 12 + codeIndex * 12
+              let codeChildOffset = readU32LE(codeHeader, entryOffset)
+              let codeChildLength = readU32LE(codeHeader, entryOffset + 4)
+              let codeChildId = readU32LE(codeHeader, entryOffset + 8)
+              if codeChildId in [0'u32, 3'u32]:
+                let objectData = image.readSlice(dataFile,
+                  codeOffset + int64(codeChildOffset), int(codeChildLength))
+                if codeChildId == 0:
+                  objectGraphicsInfoIds = collectGameObjectGraphicsInfoIds(
+                    objectData, codeChildLength)
+                  for objectId in objectGraphicsInfoIds.keys:
+                    objectDefinitionIds.incl(objectId)
+                else:
+                  graphicsInfoIds = collectSectionItemIds(objectData,
+                    codeChildLength)
+            break
+        inspectObjectInstances(childData, childSection.byteLength,
+          objectDefinitionIds, objectGraphicsInfoIds, graphicsInfoIds)
       else:
         echo "No specialized parser for outer section ID ", section.id,
           " and nested section ID ", childSection.id
 
 proc main() =
-  if paramCount() notin [2, 3, 4, 7]:
-    quit("Usage: rm2_inspect <image.iso> <path-inside-CRASH.BD> [outer-section-index [nested-section-index [--hex offset byte-count]]]", 1)
+  if paramCount() notin [2, 3, 4, 6, 7]:
+    quit("Usage: rm2_inspect <image.iso> <path-inside-CRASH.BD> [outer-section-index [nested-section-index [--hex offset byte-count]] | outer-section-index --hex offset byte-count]", 1)
 
   var outerSectionIndex = -1
   var nestedSectionIndex = -1
