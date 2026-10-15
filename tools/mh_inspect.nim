@@ -87,6 +87,11 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
   var typeOneEndMarkerCount = 0
   var typeOneStridePatternRecords: seq[int]
   var typeOneEndMarkerRecords: seq[int]
+  var typeOneFrameCount = 0
+  var typeOnePlausibleFrameCount = 0
+  var typeOneInvalidFrameHeaders = 0
+  var typeOneFrameHeaderBytes: array[256, int]
+  var typeOneFrameFlagBytes: array[256, int]
 
   for recordIndex in 0 ..< int(declaredCount):
     let base = TableHeaderSize + recordIndex * RecordSize
@@ -132,6 +137,21 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
           if readU32LE(prefix, 224) == 0x44:
             inc typeOneEndMarkerCount
             typeOneEndMarkerRecords.add(recordIndex)
+
+        # Check each aligned 16-byte block against the PSX ADPCM header shape.
+        let payload = image.readSlice(dataEntry, int64(byteOffset),
+          int(byteLength))
+        for frameOffset in countup(0, payload.len - 16, 16):
+          let header = payload[frameOffset]
+          let flags = payload[frameOffset + 1]
+          let filter = header shr 4
+          inc typeOneFrameCount
+          inc typeOneFrameHeaderBytes[int(header)]
+          inc typeOneFrameFlagBytes[int(flags)]
+          if filter <= 4 and flags < 7:
+            inc typeOnePlausibleFrameCount
+          else:
+            inc typeOneInvalidFrameHeaders
 
       if sampleCount < 4:
         let sample = image.readSlice(dataEntry, int64(byteOffset),
@@ -196,6 +216,28 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
   echo "Type-1 ranges with 0x44 at +0xE0: ", typeOneEndMarkerCount,
     " / ", typeOneCount
   echo "  Matching record indices: ", typeOneEndMarkerRecords
+  echo "Type-1 aligned 16-byte blocks: ", typeOneFrameCount
+  echo "  PSX ADPCM-like header candidates (filter<=4, flags<7): ",
+    typeOnePlausibleFrameCount, " / ", typeOneFrameCount
+  echo "  Blocks outside those PSX ADPCM-like limits: ",
+    typeOneInvalidFrameHeaders
+  echo "  Most common first-byte headers:"
+  var shownHeaderValues: array[256, bool]
+  for _ in 0 ..< 12:
+    var bestValue = -1
+    var bestCount = 0
+    for value in 0 .. 255:
+      if not shownHeaderValues[value] and
+          typeOneFrameHeaderBytes[value] > bestCount:
+        bestValue = value
+        bestCount = typeOneFrameHeaderBytes[value]
+    if bestValue < 0:
+      break
+    shownHeaderValues[bestValue] = true
+    echo "    0x", toHex(bestValue, 2), ": ", bestCount
+  echo "  Common second-byte flag values (0..7):"
+  for value in 0 .. 7:
+    echo "    0x", toHex(value, 2), ": ", typeOneFrameFlagBytes[value]
 
 proc main() =
   if paramCount() notin [1, 3]:
