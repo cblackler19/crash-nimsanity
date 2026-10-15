@@ -22,7 +22,7 @@ An experimental native reimplementation of *Crash Twinsanity* in Nim. The projec
 
 The renderer is at the foundation stage: it opens an 800 × 600 window, draws a rotating colored cube, and supports basic camera translation. It does not yet load Crash Twinsanity levels, models, textures, or other game assets.
 
-The research tools can inspect an ISO image directly. Current format work covers ISO9660 filesystems, `.BH`/`.BD` archive indexes, `.MH`/`.MB` tables, and `.RM2`/`.SM2` section, texture, material, model, rigid-model reference, and bounded VIF command records, including candidate position, UV/color, normal, emissive-byte, and triangle-strip data. In the Cavern samples, all parsed shader texture IDs and rigid-model material links resolve to sibling records. The 75 PSMT8 texture records also have metadata and transfer-buffer sizes that match their bounded item ranges; pixel swizzling and palette decoding remain future work. Findings and open questions are tracked in [the asset investigation notes](docs/asset-investigation.md). Format labels taken from community tools are identified as their authors' classifications; observed facts and unresolved interpretations are kept separate.
+The research tools can inspect an ISO image directly. Current format work covers ISO9660 filesystems, `.BH`/`.BD` archive indexes, `.MH`/`.MB` tables, and `.RM2`/`.SM2` section, texture, material, model, rigid-model reference, and bounded VIF command records, including candidate position, UV/color, normal, emissive-byte, and triangle-strip data. In the Cavern samples, all parsed shader texture IDs and rigid-model material links resolve to sibling records. A Nim PSMT8 decoder converts all 75 Cavern textures into RGBA in memory; one decoded texture has been visually reviewed. Mipmap handling and displaying game assets in the renderer remain future work. Findings and open questions are tracked in [the asset investigation notes](docs/asset-investigation.md). Format labels taken from community tools are identified as their authors' classifications; observed facts and unresolved interpretations are kept separate.
 
 ## Requirements
 
@@ -63,7 +63,7 @@ The repository includes these utilities:
 | `iso9660_inspect` | List ISO9660 directories or print a bounded hexadecimal file range. |
 | `bh_inspect` | Parse a `.BH` archive index and optionally check its ranges against the paired `.BD`. |
 | `mh_inspect` | Compare `.MH` records with candidate ranges in the paired `.MB`. |
-| `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, texture/material/model/rigid-model records, and VIF block lengths. |
+| `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, decode PSMT8 textures in memory, inspect material/model/rigid-model records, and scan VIF blocks. |
 | `elf_mips_refs` | Find direct MIPS immediate references to strings in a supplied ELF executable. |
 
 The examples below use POSIX shell syntax. In PowerShell, prefix local tools with `.` (for example, `.\tools\rm2_inspect.exe`) and use the `.exe` suffix.
@@ -106,7 +106,7 @@ Game images, executables, and extracted assets are not part of this repository. 
 
 ## Credits and research references
 
-- [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), by Smartkin, Artem Yashin (NeoKesha), and BetaM, is MIT licensed. Its archive, section, model, rigid-model, and VIF/DMA readers informed format cross-checks. No source code was copied or adapted; the local ISO samples were parsed independently. If MIT-licensed code is incorporated in the future, its required copyright and permission notices must be retained.
+- [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), by Smartkin, Artem Yashin (NeoKesha), and BetaM, is MIT licensed. Its archive, section, model, rigid-model, and VIF/DMA readers informed format cross-checks, and its PSMT8 mapping was adapted for the Nim decoder. The local ISO samples were parsed independently. Required MIT notices are retained in [third-party notices](docs/THIRD_PARTY_LICENSES.md).
 - [KnuxLib](https://github.com/Knuxfan24/KnuxLib), by Knuxfan24, is MIT licensed and independently recognizes the `.BH`/`.BD` archive pairing. It was used as a format reference; no code was copied.
 - The full source list, attributions, and research limitations are maintained in [the asset investigation notes](docs/asset-investigation.md).
 
