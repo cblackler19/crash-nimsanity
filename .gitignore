@@ -16,6 +16,7 @@
 #
 /gamefiles/
 /main.exe
+/main_*.exe
 /nimcache/
 /tools/iso9660_inspect
 /tools/iso9660_inspect.exe
