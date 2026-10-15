@@ -109,6 +109,16 @@ proc draw*(mesh: Mesh) =
   glBindVertexArray(mesh.vao)
   glDrawArrays(GL_TRIANGLES, 0, mesh.vertexCount)
 
+proc drawRange*(mesh: Mesh, firstVertex, vertexCount: int) =
+  if firstVertex < 0 or vertexCount < 0 or
+      firstVertex > int(mesh.vertexCount) - vertexCount:
+    raise newException(ValueError, "Mesh draw range exceeds uploaded vertices")
+  if vertexCount == 0:
+    return
+
+  glBindVertexArray(mesh.vao)
+  glDrawArrays(GL_TRIANGLES, GLint(firstVertex), GLsizei(vertexCount))
+
 proc destroy*(mesh: var Mesh) =
   # Release the GPU objects owned by this mesh while its OpenGL context is alive.
   glDeleteVertexArrays(1, mesh.vao.addr)
