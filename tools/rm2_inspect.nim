@@ -44,6 +44,73 @@ proc readU16LE(data: openArray[uint8], offset: int): uint16 =
 
   uint16(data[offset]) or (uint16(data[offset + 1]) shl 8)
 
+proc alignUp(value, alignment: int): int =
+  ((value + alignment - 1) div alignment) * alignment
+
+proc scanVifCommands(data: openArray[uint8], start, length: int): tuple[
+    commands: int, unpacks: int, unsupported: bool, malformed: bool] =
+  var cursor = start
+  let limit = start + length
+  var cycleLength = 0
+  var writeLength = 0
+
+  while cursor < limit:
+    if limit - cursor < 4:
+      result.malformed = true
+      break
+
+    let command = readU32LE(data, cursor)
+    let opcode = int((command shr 24) and 0x7F)
+    let amountField = int((command shr 16) and 0xFF)
+    let amount = if amountField == 0: 256 else: amountField
+    let immediate = int(command and 0xFFFF)
+    var payloadBytes = 0
+    inc result.commands
+
+    if (opcode and 0x60) == 0x60:
+      let vectorComponents = ((opcode shr 2) and 3) + 1
+      let componentBits = 32 shr (opcode and 3)
+      var suppliedVectors = amount
+      if writeLength > cycleLength and writeLength > 0:
+        suppliedVectors = cycleLength * (amount div writeLength) +
+          min(amount mod writeLength, cycleLength)
+
+      # V4-5 has a packed 16-bit representation rather than 4-bit components.
+      let dataBits = if vectorComponents == 4 and componentBits == 4:
+        suppliedVectors * 16
+      else:
+        suppliedVectors * vectorComponents * componentBits
+      payloadBytes = alignUp((dataBits + 7) div 8, 4)
+      inc result.unpacks
+    else:
+      case opcode
+      of 0x01: # STCYCL
+        cycleLength = immediate and 0xFF
+        writeLength = (immediate shr 8) and 0xFF
+      of 0x20: # STMASK
+        payloadBytes = 4
+      of 0x30, 0x31: # STROW / STCOL
+        payloadBytes = 16
+      of 0x4A: # MPG loads 64-bit micro-instructions
+        payloadBytes = amount * 8
+      of 0x50, 0x51: # DIRECT / DIRECTHL transfer qwords to GIF
+        payloadBytes = (if immediate == 0: 65536 else: immediate) * 16
+      of 0x00, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+          0x10, 0x11, 0x13, 0x14, 0x15, 0x17:
+        discard
+      else:
+        result.unsupported = true
+        break
+
+    cursor += 4
+    if payloadBytes > limit - cursor:
+      result.malformed = true
+      break
+    cursor += payloadBytes
+
+  if cursor != limit and not result.unsupported:
+    result.malformed = true
+
 proc parseArchiveEntry(data: openArray[uint8], cursor: var int): ArchiveEntry =
   let pathLength = readU32LE(data, cursor)
   let remaining = data.len - cursor - 4
@@ -144,6 +211,11 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
   var minQwcLengthDifference = high(int64)
   var maxQwcLengthDifference = low(int64)
   var minPositiveQwcLengthDifference = high(int64)
+  var vifCommandCount = 0'u64
+  var vifUnpackCount = 0'u64
+  var vifScanned = 0'u64
+  var vifUnsupported = 0'u64
+  var vifMalformed = 0'u64
 
   for itemIndex in 0 ..< int(sectionCount):
     let entryOffset = 12 + itemIndex * 12
@@ -197,6 +269,16 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
             inc vifStreamsWithNonzeroQwcTail
         minQwcLengthDifference = min(minQwcLengthDifference, difference)
         maxQwcLengthDifference = max(maxQwcLengthDifference, difference)
+        if tagAndPayloadBytes <= uint64(vifLength):
+          let scan = scanVifCommands(sectionData, cursor + 8,
+            int(tagAndPayloadBytes) - 8)
+          inc vifScanned
+          vifCommandCount += uint64(scan.commands)
+          vifUnpackCount += uint64(scan.unpacks)
+          if scan.unsupported:
+            inc vifUnsupported
+          if scan.malformed:
+            inc vifMalformed
       if not sampledVif:
         let sampleLength = min(32, int(vifLength))
         var sample = ""
@@ -264,6 +346,10 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
       minQwcLengthDifference, " to ", maxQwcLengthDifference, " bytes"
   if minPositiveQwcLengthDifference != high(int64):
     echo "Smallest positive VIF tail: ", minPositiveQwcLengthDifference, " bytes"
+  echo "VIF command walk: ", vifScanned, " streams, ", vifCommandCount,
+    " commands, ", vifUnpackCount, " UNPACK commands"
+  echo "VIF streams with unsupported commands: ", vifUnsupported
+  echo "VIF streams with truncated or misaligned command data: ", vifMalformed
 
 proc inspectRigidModels(sectionData: openArray[uint8], sectionLength: uint32) =
   if sectionData.len < 12:
