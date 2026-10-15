@@ -35,6 +35,7 @@ type
     unsupported: bool
     malformed: bool
     vectorsByAddress: array[1024, uint64]
+    attributeFormats: array[4, array[32, uint64]]
 
 proc readU32LE(data: openArray[uint8], offset: int): uint32 =
   if offset < 0 or offset > data.len - 4:
@@ -89,7 +90,10 @@ proc scanVifCommands(data: openArray[uint8], start,
         suppliedVectors * vectorComponents * componentBits
       payloadBytes = alignUp((dataBits + 7) div 8, 4)
       inc result.unpacks
-      result.vectorsByAddress[immediate and 0x3FF] += uint64(amount)
+      let address = immediate and 0x3FF
+      result.vectorsByAddress[address] += uint64(amount)
+      if address in 3 .. 6:
+        result.attributeFormats[address - 3][opcode and 0x1F] += 1
     else:
       case opcode
       of 0x01: # STCYCL
@@ -226,6 +230,7 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
   var vifMalformed = 0'u64
   var vifStreamsWithAddress = newSeq[uint64](1024)
   var vifStreamsMatchingVertexCount = newSeq[uint64](1024)
+  var vifAttributeFormats: array[4, array[32, uint64]]
 
   for itemIndex in 0 ..< int(sectionCount):
     let entryOffset = 12 + itemIndex * 12
@@ -290,6 +295,10 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
               inc vifStreamsWithAddress[address]
               if vectorCount == uint64(vertexCount):
                 inc vifStreamsMatchingVertexCount[address]
+          for address in 0 ..< vifAttributeFormats.len:
+            for format in 0 ..< vifAttributeFormats[address].len:
+              vifAttributeFormats[address][format] +=
+                scan.attributeFormats[address][format]
           if scan.unsupported:
             inc vifUnsupported
           if scan.malformed:
@@ -370,6 +379,20 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
     if vifStreamsWithAddress[address] > 0:
       echo "  address ", address, ": ", vifStreamsMatchingVertexCount[address],
         " / ", vifStreamsWithAddress[address], " streams"
+  echo "UNPACK formats at attribute addresses:"
+  for address in 0 ..< vifAttributeFormats.len:
+    var formatSummary = ""
+    for format in 0 ..< vifAttributeFormats[address].len:
+      let count = vifAttributeFormats[address][format]
+      if count > 0:
+        if formatSummary.len > 0:
+          formatSummary.add(", ")
+        formatSummary.add("0x")
+        formatSummary.add(toHex(0x60 or format, 2))
+        formatSummary.add("=")
+        formatSummary.add($count)
+    if formatSummary.len > 0:
+      echo "  address ", address + 3, ": ", formatSummary
 
 proc collectSectionItemIds(sectionData: openArray[uint8],
     sectionLength: uint32): HashSet[uint32] =
