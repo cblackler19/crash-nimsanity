@@ -55,6 +55,7 @@ type
   ScenePreview* = object
     models*: seq[SceneModel]
     placements*: seq[ScenePlacement]
+    staticGeometry*: bool
     center*: array[3, float32]
     minimum*: array[3, float32]
     maximum*: array[3, float32]
@@ -473,5 +474,102 @@ proc loadPlacementModelsFromIso*(imagePath, resourcePath: string,
     for axis in 0 .. 2:
       result.minimum[axis] = min(result.minimum[axis], placement.position[axis])
       result.maximum[axis] = max(result.maximum[axis], placement.position[axis])
+  for axis in 0 .. 2:
+    result.center[axis] = (result.minimum[axis] + result.maximum[axis]) * 0.5'f32
+
+proc loadStaticGeometryFromIso*(imagePath, resourcePath: string): ScenePreview =
+  ## Load every SM2 model item without adding inferred transforms.
+  if not resourcePath.toLowerAscii().endsWith(".sm2"):
+    raise newException(ValueError, "Static geometry preview expects an SM2 resource")
+  let image = openIso(imagePath)
+  defer: image.close()
+
+  let indexFile = image.findEntry("CRASH6/CRASH.BH")
+  let dataFile = image.findEntry("CRASH6/CRASH.BD")
+  let indexData = image.readSlice(indexFile, 0, int(indexFile.byteLength))
+  let requested = resourcePath.replace('/', '\\').toLowerAscii()
+  var archiveCursor = 4
+  var resourceEntry: ArchiveEntry
+  var foundResource = false
+  while archiveCursor < indexData.len:
+    let entry = parseArchiveEntry(indexData, archiveCursor)
+    if entry.path.replace('/', '\\').toLowerAscii() == requested:
+      resourceEntry = entry
+      foundResource = true
+      break
+  if not foundResource:
+    raise newException(IOError, "Resource path was not found in CRASH.BH")
+  if uint64(resourceEntry.dataOffset) + uint64(resourceEntry.dataLength) >
+      uint64(dataFile.byteLength):
+    raise newException(IOError, "Resource range exceeds CRASH.BD")
+
+  let resourceOffset = int64(resourceEntry.dataOffset)
+  let rootSections = readSectionTable(image, dataFile, resourceOffset,
+    resourceEntry.dataLength)
+  var graphicsSection: SectionRange
+  var foundGraphics = false
+  for section in rootSections:
+    if section.id == 6:
+      graphicsSection = section
+      foundGraphics = true
+      break
+  if not foundGraphics:
+    raise newException(IOError, "SM2 graphics section (ID 6) was not found")
+
+  let graphicsOffset = resourceOffset + int64(graphicsSection.offset)
+  let graphicsSections = readSectionTable(image, dataFile, graphicsOffset,
+    graphicsSection.byteLength)
+  var modelTable: seq[uint8]
+  var foundModelTable = false
+  for section in graphicsSections:
+    if section.id == 2:
+      modelTable = readSection(image, dataFile, graphicsOffset, section)
+      foundModelTable = true
+      break
+  if not foundModelTable:
+    raise newException(IOError, "SM2 model table (child ID 2) was not found")
+
+  let modelIds = parseItemIds(modelTable)
+  if modelIds.len == 0:
+    raise newException(IOError, "SM2 contains no model items")
+  result.staticGeometry = true
+  for modelId in modelIds:
+    try:
+      let textureLink = findTextureForModelFromIso(imagePath, resourcePath,
+        modelId)
+      let model = loadModelFromIso(imagePath, resourcePath, modelId)
+      let texture = loadTextureFromIso(imagePath, resourcePath,
+        textureLink.textureId)
+      result.models.add(SceneModel(
+        modelId: modelId,
+        modelPath: resourcePath,
+        materialPath: resourcePath,
+        textureId: textureLink.textureId,
+        model: model,
+        texture: texture
+      ))
+      echo "SM2 model ", modelId, ": ", model.submodelCount,
+        " submodels, ", model.triangleCount, " candidate triangles, texture ",
+        textureLink.textureId
+    except CatchableError as error:
+      echo "Skipping SM2 model ", modelId, ": ", error.msg
+
+  if result.models.len == 0:
+    raise newException(IOError, "No SM2 models could be loaded")
+
+  var hasBounds = false
+  for sceneModel in result.models:
+    for vertex in sceneModel.model.vertices:
+      if not hasBounds:
+        for axis in 0 .. 2:
+          result.minimum[axis] = vertex.position[axis]
+          result.maximum[axis] = vertex.position[axis]
+        hasBounds = true
+      else:
+        for axis in 0 .. 2:
+          result.minimum[axis] = min(result.minimum[axis], vertex.position[axis])
+          result.maximum[axis] = max(result.maximum[axis], vertex.position[axis])
+  if not hasBounds:
+    raise newException(IOError, "Loaded SM2 models contain no triangle vertices")
   for axis in 0 .. 2:
     result.center[axis] = (result.minimum[axis] + result.maximum[axis]) * 0.5'f32
