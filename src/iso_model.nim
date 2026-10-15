@@ -51,9 +51,9 @@ proc findItemRange(itemTable: openArray[uint8], itemId: uint32):
       return (int(offset), int(byteLength))
   raise newException(IOError, "Graphics item ID not found: " & $itemId)
 
-proc findTextureForModelFromIso*(imagePath, resourcePath: string,
-    modelId: uint32): ModelTextureLink =
-  ## Follow model-to-rigid-model-to-material-to-texture links inside one resource.
+proc findTexturesForModelFromIso*(imagePath, resourcePath: string,
+    modelId: uint32): seq[ModelTextureLink] =
+  ## Follow every model-to-rigid-model-to-material-to-texture link in the resource.
   let rigidModels = readGraphicsSectionFromIso(imagePath, resourcePath, 3)
   let materials = readGraphicsSectionFromIso(imagePath, resourcePath, 1)
   let textures = readGraphicsSectionFromIso(imagePath, resourcePath, 0)
@@ -65,6 +65,8 @@ proc findTextureForModelFromIso*(imagePath, resourcePath: string,
   var textureIds = initHashSet[uint32]()
   for itemIndex in 0 ..< int(textureItemCount):
     textureIds.incl(readU32LE(textures, 12 + itemIndex * 12 + 8))
+
+  var seenLinks = initHashSet[uint64]()
 
   if rigidModels.len < 12:
     raise newException(IOError, "Rigid-model table is shorter than its header")
@@ -115,11 +117,21 @@ proc findTextureForModelFromIso*(imagePath, resourcePath: string,
           raise newException(IOError, "Material shader exceeds its item")
         let textureId = readU32LE(material, shaderOffset + shaderLength - 8)
         if textureIds.contains(textureId):
-          return ModelTextureLink(materialId: materialId, textureId: textureId)
+          let linkKey = (uint64(materialId) shl 32) or uint64(textureId)
+          if linkKey notin seenLinks:
+            result.add(ModelTextureLink(materialId: materialId,
+              textureId: textureId))
+            seenLinks.incl(linkKey)
         shaderOffset += shaderLength
 
-  raise newException(IOError, "No sibling material texture resolves for model ID " &
-    $modelId)
+  if result.len == 0:
+    raise newException(IOError, "No sibling material texture resolves for model ID " &
+      $modelId)
+
+proc findTextureForModelFromIso*(imagePath, resourcePath: string,
+    modelId: uint32): ModelTextureLink =
+  ## Preserve the preview's single-texture convenience while exposing all links.
+  findTexturesForModelFromIso(imagePath, resourcePath, modelId)[0]
 
 proc loadModelFromIso*(imagePath, resourcePath: string,
     modelId: uint32): DecodedModel =
