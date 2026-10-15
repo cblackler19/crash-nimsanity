@@ -41,7 +41,11 @@ proc main() =
     for submodelIndex in 0 ..< model.submodelCount:
       echo "  submodel ", submodelIndex, ": ",
         model.submodelVertexCounts[submodelIndex], " source vertices, ",
-        model.submodelTriangleCounts[submodelIndex], " candidate triangles"
+        model.submodelTriangleCounts[submodelIndex], " candidate triangles, ",
+        "expanded vertex range ",
+        model.submodelTriangleVertexOffsets[submodelIndex], "..<",
+        model.submodelTriangleVertexOffsets[submodelIndex] +
+          model.submodelTriangleCounts[submodelIndex] * 3
     try:
       let links = findTexturesForModelFromIso(paramStr(1), paramStr(2), modelId)
       echo "Resolved material/texture links: ", links.len
