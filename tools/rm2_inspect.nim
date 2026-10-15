@@ -29,6 +29,11 @@ type
     byteLength: uint32
     id: uint32
 
+  UvSample = object
+    u, v: float32
+    color: array[4, uint8]
+    connected: bool
+
   VifScanSummary = object
     commands: int
     unpacks: int
@@ -41,6 +46,14 @@ type
     positionMin: array[3, float32]
     positionMax: array[3, float32]
     positionSamples: seq[array[3, float32]]
+    uvCount: uint64
+    invalidUvCount: uint64
+    uvMin: array[2, float32]
+    uvMax: array[2, float32]
+    connectedVertices: uint64
+    disconnectedVertices: uint64
+    uvSamples: seq[UvSample]
+    connectionFlags: seq[bool]
 
 proc readU32LE(data: openArray[uint8], offset: int): uint32 =
   if offset < 0 or offset > data.len - 4:
@@ -129,6 +142,48 @@ proc scanVifCommands(data: openArray[uint8], start,
               result.positionSamples.add(position)
           else:
             inc result.invalidPositionVectors
+      elif address == 4 and (opcode and 0x1F) == 0x0C:
+        let payloadStart = cursor + 4
+        for vectorIndex in 0 ..< suppliedVectors:
+          let vectorStart = payloadStart + vectorIndex * 16
+          let xWord = readU32LE(data, vectorStart)
+          let yWord = readU32LE(data, vectorStart + 4)
+          let zWord = readU32LE(data, vectorStart + 8)
+          let wWord = readU32LE(data, vectorStart + 12)
+          let rawU = cast[float32](xWord and 0xFFFFFF00'u32)
+          let rawV = cast[float32](yWord and 0xFFFFFF00'u32)
+          let u = rawU
+          let v = 1.0'f32 - rawV
+
+          if u == u and v == v and abs(u) < 1.0e20'f32 and
+              abs(v) < 1.0e20'f32:
+            if result.uvCount == 0:
+              result.uvMin = [u, v]
+              result.uvMax = [u, v]
+            else:
+              result.uvMin[0] = min(result.uvMin[0], u)
+              result.uvMin[1] = min(result.uvMin[1], v)
+              result.uvMax[0] = max(result.uvMax[0], u)
+              result.uvMax[1] = max(result.uvMax[1], v)
+            inc result.uvCount
+          else:
+            inc result.invalidUvCount
+
+          let connected = ((wWord shr 8) and 0xFF) != 128
+          if connected:
+            inc result.connectedVertices
+          else:
+            inc result.disconnectedVertices
+          result.connectionFlags.add(connected)
+
+          if result.uvSamples.len < 3:
+            result.uvSamples.add(UvSample(
+              u: u,
+              v: v,
+              color: [uint8(xWord and 0xFF), uint8(yWord and 0xFF),
+                uint8(zWord and 0xFF), uint8((wWord shl 1) and 0xFF)],
+              connected: connected
+            ))
     else:
       case opcode
       of 0x01: # STCYCL
@@ -271,6 +326,17 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
   var positionMin: array[3, float32]
   var positionMax: array[3, float32]
   var positionSamples: seq[array[3, float32]]
+  var uvCount = 0'u64
+  var invalidUvCount = 0'u64
+  var uvMin: array[2, float32]
+  var uvMax: array[2, float32]
+  var connectedVertices = 0'u64
+  var disconnectedVertices = 0'u64
+  var uvSamples: seq[UvSample]
+  var streamsWithUv = 0'u64
+  var streamsWithTrianglePrefix = 0'u64
+  var candidateTriangleMarkers = 0'u64
+  var firstConnectionFlags: seq[bool]
 
   for itemIndex in 0 ..< int(sectionCount):
     let entryOffset = 12 + itemIndex * 12
@@ -354,6 +420,34 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
               if positionSamples.len < 3:
                 positionSamples.add(sample)
           invalidPositionVectors += scan.invalidPositionVectors
+          if scan.uvCount > 0:
+            if uvCount == 0:
+              uvMin = scan.uvMin
+              uvMax = scan.uvMax
+            else:
+              uvMin[0] = min(uvMin[0], scan.uvMin[0])
+              uvMin[1] = min(uvMin[1], scan.uvMin[1])
+              uvMax[0] = max(uvMax[0], scan.uvMax[0])
+              uvMax[1] = max(uvMax[1], scan.uvMax[1])
+            uvCount += scan.uvCount
+            connectedVertices += scan.connectedVertices
+            disconnectedVertices += scan.disconnectedVertices
+            for sample in scan.uvSamples:
+              if uvSamples.len < 3:
+                uvSamples.add(sample)
+          if scan.connectionFlags.len > 0:
+            inc streamsWithUv
+            if firstConnectionFlags.len == 0:
+              for flagIndex in 0 ..< min(6, scan.connectionFlags.len):
+                firstConnectionFlags.add(scan.connectionFlags[flagIndex])
+            if scan.connectionFlags.len >= 3:
+              if not scan.connectionFlags[0] and
+                  not scan.connectionFlags[1] and scan.connectionFlags[2]:
+                inc streamsWithTrianglePrefix
+              for flagIndex in 2 ..< scan.connectionFlags.len:
+                if scan.connectionFlags[flagIndex]:
+                  inc candidateTriangleMarkers
+          invalidUvCount += scan.invalidUvCount
           if scan.unsupported:
             inc vifUnsupported
           if scan.malformed:
@@ -455,6 +549,21 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
       " y=", positionMin[1], "..", positionMax[1],
       " z=", positionMin[2], "..", positionMax[2]
     echo "  first vectors: ", positionSamples
+  echo "Address 4 V4_32 UV candidates: ", uvCount, " finite, ",
+    invalidUvCount, " non-finite"
+  if uvCount > 0:
+    echo "  bounds: U=", uvMin[0], "..", uvMax[0],
+      " V=", uvMin[1], "..", uvMax[1]
+    echo "  editor connectivity flag: ", connectedVertices,
+      " connected, ", disconnectedVertices, " disconnected"
+    echo "  candidate triangle markers after the first two vertices: ",
+      candidateTriangleMarkers
+    echo "  streams beginning false,false,true: ", streamsWithTrianglePrefix,
+      " / ", streamsWithUv
+    echo "  first connectivity flags: ", firstConnectionFlags
+    for sample in uvSamples:
+      echo "  sample: UV=", sample.u, ",", sample.v,
+        " RGBA=", sample.color, " connected=", sample.connected
 
 proc collectSectionItemIds(sectionData: openArray[uint8],
     sectionLength: uint32): HashSet[uint32] =
