@@ -14,7 +14,7 @@
 # OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 # PERFORMANCE OF THIS SOFTWARE.
 #
-import std/[sets, strutils, tables]
+import std/[math, sets, strutils, tables]
 
 import math3d
 import iso9660
@@ -42,6 +42,7 @@ type
     path: string
     linkType: uint32
     objectMatrix: Mat4
+    chunkMatrix: Mat4
 
   SceneModel* = object
     modelId*: uint32
@@ -221,14 +222,14 @@ proc readChunkLinksFromIso(imagePath, resourcePath: string): seq[ChunkLink] =
       cursor += 4
       let objectMatrix = readMatrixRows(sectionData, cursor, sectionData.len)
       cursor += 64
-      discard readMatrixRows(sectionData, cursor, sectionData.len)
+      let chunkMatrix = readMatrixRows(sectionData, cursor, sectionData.len)
       cursor += 64
       if (flags and 0x80000'u32) != 0:
         discard readMatrixRows(sectionData, cursor, sectionData.len)
         cursor += 64
       skipChunkLinkTree(sectionData, cursor, sectionData.len, linkType)
       result.add(ChunkLink(path: path, linkType: linkType,
-        objectMatrix: objectMatrix))
+        objectMatrix: objectMatrix, chunkMatrix: chunkMatrix))
     break
 
 proc parseObjectOgiLinks(sectionData: openArray[uint8]): Table[uint32, seq[uint16]] =
@@ -779,9 +780,18 @@ proc transformPoint(matrix: Mat4, position: array[3, float32]): array[3, float32
     result[row] = matrix[row] * position[0] + matrix[4 + row] * position[1] +
       matrix[8 + row] * position[2] + matrix[12 + row]
 
+proc placementLocalTransform(placement: ScenePlacement): Mat4 =
+  let angleScale = 2.0'f32 * PI.float32 / 65536.0'f32
+  let rotateX = rotationMatrixX(float32(placement.rotations[0]) * angleScale)
+  let rotateY = rotationMatrixY(float32(placement.rotations[2]) * angleScale)
+  let rotateZ = rotationMatrixZ(float32(placement.rotations[4]) * angleScale)
+  let rotation = multiply(rotateZ, multiply(rotateY, rotateX))
+  multiply(translationMatrix(placement.position[0], placement.position[1],
+    placement.position[2]), rotation)
+
 proc loadLinkedChunkGeometryFromIso*(imagePath, resourcePath: string,
-    maxDepth: int): ScenePreview =
-  ## Load connected SM2 chunks using their ObjectMatrix as a transform candidate.
+    maxDepth: int, useChunkMatrix = false): ScenePreview =
+  ## Load linked SM2 chunks using one explicitly selected link-matrix candidate.
   if maxDepth < 0 or maxDepth > 2:
     raise newException(ValueError, "Chunk-link depth must be between 0 and 2")
 
@@ -840,10 +850,21 @@ proc loadLinkedChunkGeometryFromIso*(imagePath, resourcePath: string,
         placedInstance.modelIndex += modelOffset
         placedInstance.chunkTransform = current.transform
         result.placements.add(placedInstance)
-        let worldPosition = transformPoint(current.transform, placement.position)
-        for axis in 0 .. 2:
-          result.minimum[axis] = min(result.minimum[axis], worldPosition[axis])
-          result.maximum[axis] = max(result.maximum[axis], worldPosition[axis])
+        # Fit the camera around the rotated mesh, not just its placement origin.
+        let modelTransform = multiply(current.transform,
+          placementLocalTransform(placement))
+        let placedModel = placementScene.models[placement.modelIndex].model
+        for vertex in placedModel.vertices:
+          let worldPosition = transformPoint(modelTransform, vertex.position)
+          if not hasBounds:
+            for axis in 0 .. 2:
+              result.minimum[axis] = worldPosition[axis]
+              result.maximum[axis] = worldPosition[axis]
+            hasBounds = true
+          else:
+            for axis in 0 .. 2:
+              result.minimum[axis] = min(result.minimum[axis], worldPosition[axis])
+              result.maximum[axis] = max(result.maximum[axis], worldPosition[axis])
       echo "Loaded ", placementScene.placements.len,
         " RM2 object model instances from ", rm2Path
     except CatchableError as error:
@@ -858,7 +879,8 @@ proc loadLinkedChunkGeometryFromIso*(imagePath, resourcePath: string,
       let targetKey = targetPath.replace('/', '\\').toLowerAscii()
       if targetKey in visited:
         continue
-      pending.add((targetPath, multiply(current.transform, link.objectMatrix),
+      let linkTransform = if useChunkMatrix: link.chunkMatrix else: link.objectMatrix
+      pending.add((targetPath, multiply(current.transform, linkTransform),
         current.depth + 1))
 
   if result.models.len == 0 or not hasBounds:
