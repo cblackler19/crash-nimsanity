@@ -97,6 +97,8 @@ The editor maps graphics child ID 3 to rigid models and child ID 6 to meshes; bo
 
 The editor's `Material.Load` reader describes material records as an eight-byte header, an unknown word, a length-prefixed name, a shader count, and variable-size shader records. The bounded reader parses the Cavern material section using those type-dependent shader sizes and compares each shader's texture ID with the sibling texture table. In `cavent.rm2`, all 70 material records end at their declared boundaries, containing 71 shader records whose texture IDs all resolve among the 44 textures. All 86 material links in the 66 sibling rigid models also resolve to those material IDs, while all 66 mesh links resolve to model IDs. In `cavent.sm2`, all 41 material records parse exactly and their 41 shader texture IDs resolve among its 31 textures. These checks establish a consistent record-reference chain for the sample tables, not the rendering behavior of each shader setting.
 
+The model inspector follows the linked rigid-model record and now reports every distinct material/texture pair whose shader texture ID resolves in the sibling texture table. Among the first eight model IDs printed by the Cavern RM2 section inspector, seven resolve to one pair and model `4022622118` resolves to four. This confirms that assuming one texture for every model would lose valid references. The preview currently chooses the first resolved pair; the available records have not yet established how materials map onto individual submodels or faces, so the extra links are reported for inspection rather than assigned speculatively.
+
 The local game executable contains strings including `.BH`, `.BD`, `%s.mb`, `Crash6\Crash`, `Crash6\Music`, `STREAM.IRX`, `CDVDSTM.IRX`, and `streaming options`.
 
 A direct MIPS reference scan finds `.BH` and `.BD` addresses materialized in adjacent calls to executable address `0x00203ED0` from the routine beginning at `0x002B46A8`. The helper reads the suffix length, updates a caller-provided buffer's length/capacity fields, and invokes copy helpers with the suffix; this supports identifying it as a string-building routine. The caller appends `.BH` to a buffer at its stack base and `.BD` to a second buffer 16 bytes later.
@@ -111,6 +113,7 @@ These call-site observations are consistent with the `.BH` index and `.BD` data 
 
 - Inspect the `MSVp` header and music type-1 payload structure further, keeping the observed range associations separate from field semantics.
 - Inspect the model and mesh payloads in the RM2/SM2 graphics sections and verify their vertex and index layouts against the actual bytes.
+- Determine how multiple rigid-model material references are assigned across mesh data and submodels before expanding the preview beyond one texture.
 - Trace how the paired-name object and registry result are consumed after lookup, and determine whether that path reaches file access.
 
 ## Community references and licensing
