@@ -22,7 +22,7 @@ An experimental native reimplementation of *Crash Twinsanity* in Nim. The projec
 
 The renderer is at the foundation stage: it opens an 800 × 600 window, draws a rotating colored cube, and supports basic camera translation. It does not yet load Crash Twinsanity levels, models, textures, or other game assets.
 
-The research tools can inspect an ISO image directly. Current format work covers ISO9660 filesystems, `.BH`/`.BD` archive indexes, `.MH`/`.MB` tables, and `.RM2`/`.SM2` section, texture, material, model, rigid-model reference, and bounded VIF command records, including candidate position, UV/color, normal, emissive-byte, and triangle-strip data. In the Cavern samples, all parsed shader texture IDs and rigid-model material links resolve to sibling records. A Nim PSMT8 decoder converts all 75 Cavern textures into RGBA in memory; one decoded texture has been visually reviewed. Mipmap handling and displaying game assets in the renderer remain future work. Findings and open questions are tracked in [the asset investigation notes](docs/asset-investigation.md). Format labels taken from community tools are identified as their authors' classifications; observed facts and unresolved interpretations are kept separate.
+The research tools can inspect an ISO image directly. Current format work covers ISO9660 filesystems, `.BH`/`.BD` archive indexes, `.MH`/`.MB` tables, and `.RM2`/`.SM2` section, texture, material, model, rigid-model reference, and bounded VIF command records, including candidate position, UV/color, normal, emissive-byte, and triangle-strip data. In the Cavern samples, all parsed shader texture IDs and rigid-model material links resolve to sibling records. A Nim PSMT8 decoder converts all 75 Cavern textures and their mip levels into RGBA in memory; one decoded base texture has been visually reviewed. Displaying game assets in the renderer remains future work. Findings and open questions are tracked in [the asset investigation notes](docs/asset-investigation.md). Format labels taken from community tools are identified as their authors' classifications; observed facts and unresolved interpretations are kept separate.
 
 ## Requirements
 
@@ -63,7 +63,7 @@ The repository includes these utilities:
 | `iso9660_inspect` | List ISO9660 directories or print a bounded hexadecimal file range. |
 | `bh_inspect` | Parse a `.BH` archive index and optionally check its ranges against the paired `.BD`. |
 | `mh_inspect` | Compare `.MH` records with candidate ranges in the paired `.MB`. |
-| `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, decode PSMT8 textures in memory, inspect material/model/rigid-model records, and scan VIF blocks. |
+| `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, decode PSMT8 textures and mip levels in memory, inspect material/model/rigid-model records, and scan VIF blocks. |
 | `elf_mips_refs` | Find direct MIPS immediate references to strings in a supplied ELF executable. |
 
 The examples below use POSIX shell syntax. In PowerShell, prefix local tools with `.` (for example, `.\tools\rm2_inspect.exe`) and use the `.exe` suffix.
