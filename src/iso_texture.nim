@@ -88,9 +88,9 @@ proc readSections(image: IsoImage, dataFile: IsoEntry, resourceOffset: int64,
       raise newException(IOError, "Section range extends beyond its resource")
     result.add(section)
 
-proc loadTextureFromIso*(imagePath, resourcePath: string,
-    textureId: uint32): DecodedTexture =
-  ## Resolve a graphics texture through CRASH.BH/BD without extracting files.
+proc readGraphicsItemFromIso*(imagePath, resourcePath: string,
+    childSectionId, itemId: uint32): seq[uint8] =
+  ## Read one bounded graphics item from the ISO without extracting it.
   let image = openIso(imagePath)
   defer: image.close()
 
@@ -113,31 +113,35 @@ proc loadTextureFromIso*(imagePath, resourcePath: string,
     let childSections = readSections(image, dataFile, graphicsOffset,
       graphicsSection.byteLength)
     for childSection in childSections:
-      if childSection.id != 0:
+      if childSection.id != childSectionId:
         continue
 
       let textureTableOffset = graphicsOffset + int64(childSection.offset)
       let textureTable = image.readSlice(dataFile, textureTableOffset,
         int(childSection.byteLength))
       if textureTable.len < 12:
-        raise newException(IOError, "Texture item table is shorter than its header")
+        raise newException(IOError, "Graphics item table is shorter than its header")
       let itemCount = readU32LE(textureTable, 4)
       let itemTableLength = 12'u64 + uint64(itemCount) * 12'u64
       if itemTableLength > uint64(textureTable.len) or
           itemTableLength > uint64(childSection.byteLength):
-        raise newException(IOError, "Texture item table exceeds its section")
+        raise newException(IOError, "Graphics item table exceeds its section")
 
       for itemIndex in 0 ..< int(itemCount):
         let entryOffset = 12 + itemIndex * 12
         let itemOffset = readU32LE(textureTable, entryOffset)
         let itemLength = readU32LE(textureTable, entryOffset + 4)
-        let itemId = readU32LE(textureTable, entryOffset + 8)
-        if itemId != textureId:
+        let foundItemId = readU32LE(textureTable, entryOffset + 8)
+        if foundItemId != itemId:
           continue
         let itemEnd = uint64(itemOffset) + uint64(itemLength)
         if itemOffset < itemTableLength or itemEnd > uint64(textureTable.len) or
             itemEnd > uint64(childSection.byteLength):
-          raise newException(IOError, "Texture item range exceeds its section")
-        return decodePsmT8(textureTable[int(itemOffset) ..< int(itemEnd)])
+          raise newException(IOError, "Graphics item range exceeds its section")
+        return textureTable[int(itemOffset) ..< int(itemEnd)]
 
-  raise newException(IOError, "Texture ID not found in resource: " & $textureId)
+  raise newException(IOError, "Graphics item ID not found in resource: " & $itemId)
+
+proc loadTextureFromIso*(imagePath, resourcePath: string,
+    textureId: uint32): DecodedTexture =
+  decodePsmT8(readGraphicsItemFromIso(imagePath, resourcePath, 0, textureId))
