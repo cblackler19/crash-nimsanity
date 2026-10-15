@@ -77,10 +77,10 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
   var alignedTypeOneOffsetCount = 0
   var typeOneCount = 0
   var typeZeroCount = 0
+  var typeZeroRanges = initTable[string, int]()
   var typeZeroMagicCount = 0
   var typeZeroLengthCheckCount = 0
   var typeZeroWordCheckCount = 0
-  var typeZeroSamples = 0
   var sampleCount = 0
   var typeOneZeroPrefixCount = 0
   var typeOneStridePatternCount = 0
@@ -143,22 +143,32 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
         inc sampleCount
     elif kind == 0:
       inc typeZeroCount
+      typeZeroRanges.mgetOrPut($byteOffset & ":" & $byteLength, 0).inc
       if byteLength >= 20:
-        let prefix = image.readSlice(dataEntry, int64(byteOffset), 20)
+        let prefix = image.readSlice(dataEntry, int64(byteOffset),
+          min(48, int(byteLength)))
         if prefix[0 .. 3] == @[uint8('M'), uint8('S'), uint8('V'), uint8('p')]:
           inc typeZeroMagicCount
           let fieldAtFour = readU32BE(prefix, 4)
           let fieldAtTwelve = readU32BE(prefix, 12)
           let fieldAtSixteen = readU32BE(prefix, 16)
+          var streamName = ""
+          if prefix.len > 32:
+            for nameOffset in 32 ..< prefix.len:
+              if prefix[nameOffset] == 0:
+                break
+              streamName.add(char(prefix[nameOffset]))
           if uint64(fieldAtTwelve) + 48 == uint64(byteLength):
             inc typeZeroLengthCheckCount
           if fieldAtSixteen == readU32LE(headerData, base + 12):
             inc typeZeroWordCheckCount
-          if typeZeroSamples < 4:
-            echo "Type-0 MSVp record ", recordIndex, ": offset=", byteOffset,
-              " bytes=", byteLength, " BE32@+4=", fieldAtFour,
-              " BE32@+12=", fieldAtTwelve, " BE32@+16=", fieldAtSixteen
-            inc typeZeroSamples
+          echo "Type-0 MSVp record ", recordIndex, ": offset=", byteOffset,
+            " bytes=", byteLength, " header word=", fieldAtFour,
+            " channel data bytes=", fieldAtTwelve,
+            " sample rate=", fieldAtSixteen,
+            " name candidate=\"", streamName, "\"",
+            " payload+48 matches record=", uint64(fieldAtTwelve) + 48 == uint64(byteLength),
+            " prefix=", hexBytes(prefix)
         else:
           echo "Type-0 record ", recordIndex,
             " does not begin with MSVp: ", hexBytes(prefix[0 .. 3])
@@ -168,6 +178,8 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
     echo "  ", kind, ": ", count
   echo "Ranges within MB bounds: ", inBoundsCount, " / ", declaredCount
   echo "Type-0 ranges beginning MSVp: ", typeZeroMagicCount, " / ", typeZeroCount
+  echo "Distinct type-0 offset/length ranges: ", typeZeroRanges.len,
+    " (", typeZeroCount - typeZeroRanges.len, " repeated table entries)"
   echo "Type-0 MSVp ranges where BE32@+12 + 48 equals MH length: ",
     typeZeroLengthCheckCount, " / ", typeZeroMagicCount
   echo "Type-0 MSVp ranges where BE32@+16 equals MH word 3: ",
