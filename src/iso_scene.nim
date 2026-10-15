@@ -16,6 +16,7 @@
 #
 import std/[sets, strutils, tables]
 
+import math3d
 import iso9660
 import iso_model
 import iso_texture
@@ -37,11 +38,18 @@ type
     resourcePath: string
     geometryModelId: uint32
 
+  ChunkLink = object
+    path: string
+    linkType: uint32
+    objectMatrix: Mat4
+
   SceneModel* = object
     modelId*: uint32
     modelPath*: string
     materialPath*: string
     textureId*: uint32
+    hasTexture*: bool
+    modelTransform*: Mat4
     model*: DecodedModel
     texture*: DecodedTexture
 
@@ -75,6 +83,29 @@ proc readU32LE(data: openArray[uint8], offset: int): uint32 =
 
 proc readF32LE(data: openArray[uint8], offset: int): float32 =
   cast[float32](readU32LE(data, offset))
+
+proc readMatrixRows(data: openArray[uint8], offset, limit: int): Mat4 =
+  if offset < 0 or offset > limit - 64 or limit > data.len:
+    raise newException(IOError, "Chunk-link matrix exceeds its section")
+  for row in 0 .. 3:
+    for column in 0 .. 3:
+      result[column * 4 + row] = readF32LE(data,
+        offset + (row * 4 + column) * 4)
+
+proc skipChunkLinkTree(data: openArray[uint8], cursor: var int, limit: int,
+    nodeType: uint32, depth = 0) =
+  if (nodeType and 1'u32) == 0:
+    return
+  if depth >= 64 or cursor > limit - 30:
+    raise newException(IOError, "Chunk-link tree header exceeds its section")
+  let nextType = readU32LE(data, cursor)
+  cursor += 26
+  let blobSize = readU32LE(data, cursor)
+  cursor += 4
+  if blobSize < 320 or uint64(blobSize) > uint64(limit - cursor):
+    raise newException(IOError, "Chunk-link tree payload exceeds its section")
+  cursor += int(blobSize)
+  skipChunkLinkTree(data, cursor, limit, nextType, depth + 1)
 
 proc parseArchiveEntry(data: openArray[uint8], cursor: var int): ArchiveEntry =
   if cursor < 4 or cursor > data.len - 4:
@@ -135,6 +166,68 @@ proc parseItemIds(sectionData: openArray[uint8]): seq[uint32] =
     if itemOffset < tableLength or itemEnd > uint64(sectionData.len):
       raise newException(IOError, "Item payload exceeds its section")
     result.add(readU32LE(sectionData, entryOffset + 8))
+
+proc readChunkLinksFromIso(imagePath, resourcePath: string): seq[ChunkLink] =
+  let image = openIso(imagePath)
+  defer: image.close()
+
+  let indexFile = image.findEntry("CRASH6/CRASH.BH")
+  let dataFile = image.findEntry("CRASH6/CRASH.BD")
+  let indexData = image.readSlice(indexFile, 0, int(indexFile.byteLength))
+  let requested = resourcePath.replace('/', '\\').toLowerAscii()
+  var archiveCursor = 4
+  var resourceEntry: ArchiveEntry
+  var foundResource = false
+  while archiveCursor < indexData.len:
+    let entry = parseArchiveEntry(indexData, archiveCursor)
+    if entry.path.replace('/', '\\').toLowerAscii() == requested:
+      resourceEntry = entry
+      foundResource = true
+      break
+  if not foundResource:
+    raise newException(IOError, "Resource path was not found in CRASH.BH")
+  if uint64(resourceEntry.dataOffset) + uint64(resourceEntry.dataLength) >
+      uint64(dataFile.byteLength):
+    raise newException(IOError, "Resource range exceeds CRASH.BD")
+
+  let resourceOffset = int64(resourceEntry.dataOffset)
+  let rootSections = readSectionTable(image, dataFile, resourceOffset,
+    resourceEntry.dataLength)
+  for rootSection in rootSections:
+    if rootSection.id != 5:
+      continue
+    let sectionData = readSection(image, dataFile, resourceOffset, rootSection)
+    if sectionData.len < 4:
+      raise newException(IOError, "SM2 chunk-link section is truncated")
+    let linkCount = readU32LE(sectionData, 0)
+    if uint64(linkCount) > uint64(sectionData.len div 140):
+      raise newException(IOError, "SM2 chunk-link count exceeds its section")
+    var cursor = 4
+    for _ in 0 ..< int(linkCount):
+      if cursor > sectionData.len - 8:
+        raise newException(IOError, "SM2 chunk-link header is truncated")
+      let linkType = readU32LE(sectionData, cursor)
+      let pathLength = readU32LE(sectionData, cursor + 4)
+      cursor += 8
+      if uint64(pathLength) > uint64(sectionData.len - cursor - 4):
+        raise newException(IOError, "SM2 chunk-link path exceeds its section")
+      var path = newString(int(pathLength))
+      for pathIndex in 0 ..< path.len:
+        path[pathIndex] = char(sectionData[cursor + pathIndex])
+      cursor += path.len
+      let flags = readU32LE(sectionData, cursor)
+      cursor += 4
+      let objectMatrix = readMatrixRows(sectionData, cursor, sectionData.len)
+      cursor += 64
+      discard readMatrixRows(sectionData, cursor, sectionData.len)
+      cursor += 64
+      if (flags and 0x80000'u32) != 0:
+        discard readMatrixRows(sectionData, cursor, sectionData.len)
+        cursor += 64
+      skipChunkLinkTree(sectionData, cursor, sectionData.len, linkType)
+      result.add(ChunkLink(path: path, linkType: linkType,
+        objectMatrix: objectMatrix))
+    break
 
 proc parseObjectOgiLinks(sectionData: openArray[uint8]): Table[uint32, seq[uint16]] =
   result = initTable[uint32, seq[uint16]]()
@@ -435,6 +528,7 @@ proc loadPlacementModelsFromIso*(imagePath, resourcePath: string,
             modelPath: modelPath,
             materialPath: rigidLocation.resourcePath,
             textureId: textureLink.textureId,
+            hasTexture: true,
             model: loadModelFromIso(imagePath, modelPath, geometryId),
             texture: loadTextureFromIso(imagePath,
               rigidLocation.resourcePath, textureLink.textureId)
@@ -535,22 +629,29 @@ proc loadStaticGeometryFromIso*(imagePath, resourcePath: string): ScenePreview =
   result.staticGeometry = true
   for modelId in modelIds:
     try:
-      let textureLink = findTextureForModelFromIso(imagePath, resourcePath,
-        modelId)
       let model = loadModelFromIso(imagePath, resourcePath, modelId)
-      let texture = loadTextureFromIso(imagePath, resourcePath,
-        textureLink.textureId)
-      result.models.add(SceneModel(
+      var sceneModel = SceneModel(
         modelId: modelId,
         modelPath: resourcePath,
         materialPath: resourcePath,
-        textureId: textureLink.textureId,
+        modelTransform: identityMatrix(),
         model: model,
-        texture: texture
-      ))
-      echo "SM2 model ", modelId, ": ", model.submodelCount,
-        " submodels, ", model.triangleCount, " candidate triangles, texture ",
-        textureLink.textureId
+      )
+      try:
+        let textureLink = findTextureForModelFromIso(imagePath, resourcePath,
+          modelId)
+        sceneModel.textureId = textureLink.textureId
+        sceneModel.texture = loadTextureFromIso(imagePath, resourcePath,
+          textureLink.textureId)
+        sceneModel.hasTexture = true
+        echo "SM2 model ", modelId, ": ", model.submodelCount,
+          " submodels, ", model.triangleCount, " candidate triangles, texture ",
+          textureLink.textureId
+      except CatchableError as error:
+        echo "SM2 model ", modelId,
+          " has no resolving texture; drawing decoded vertex colors: ",
+          error.msg
+      result.models.add(sceneModel)
     except CatchableError as error:
       echo "Skipping SM2 model ", modelId, ": ", error.msg
 
@@ -571,5 +672,75 @@ proc loadStaticGeometryFromIso*(imagePath, resourcePath: string): ScenePreview =
           result.maximum[axis] = max(result.maximum[axis], vertex.position[axis])
   if not hasBounds:
     raise newException(IOError, "Loaded SM2 models contain no triangle vertices")
+  for axis in 0 .. 2:
+    result.center[axis] = (result.minimum[axis] + result.maximum[axis]) * 0.5'f32
+
+proc transformPoint(matrix: Mat4, position: array[3, float32]): array[3, float32] =
+  for row in 0 .. 2:
+    result[row] = matrix[row] * position[0] + matrix[4 + row] * position[1] +
+      matrix[8 + row] * position[2] + matrix[12 + row]
+
+proc loadLinkedChunkGeometryFromIso*(imagePath, resourcePath: string,
+    maxDepth: int): ScenePreview =
+  ## Load connected SM2 chunks using their ObjectMatrix as a transform candidate.
+  if maxDepth < 0 or maxDepth > 2:
+    raise newException(ValueError, "Chunk-link depth must be between 0 and 2")
+
+  type PendingChunk = tuple[path: string, transform: Mat4, depth: int]
+  var pending: seq[PendingChunk] = @[(resourcePath, identityMatrix(), 0)]
+  var visited = initHashSet[string]()
+  var hasBounds = false
+  result.staticGeometry = true
+
+  var pendingIndex = 0
+  while pendingIndex < pending.len:
+    if pending.len > 64:
+      raise newException(IOError, "Chunk-link traversal exceeds 64 resources")
+    let current = pending[pendingIndex]
+    inc pendingIndex
+    let currentKey = current.path.replace('/', '\\').toLowerAscii()
+    if currentKey in visited:
+      continue
+    visited.incl(currentKey)
+
+    var chunk: ScenePreview
+    try:
+      chunk = loadStaticGeometryFromIso(imagePath, current.path)
+    except CatchableError as error:
+      echo "Skipping linked SM2 resource ", current.path, ": ", error.msg
+      continue
+
+    echo "Loaded linked SM2 resource ", current.path,
+      " at link depth ", current.depth
+    for sceneModel in chunk.models:
+      var placedModel = sceneModel
+      placedModel.modelTransform = current.transform
+      for vertex in placedModel.model.vertices:
+        let worldPosition = transformPoint(current.transform, vertex.position)
+        if not hasBounds:
+          for axis in 0 .. 2:
+            result.minimum[axis] = worldPosition[axis]
+            result.maximum[axis] = worldPosition[axis]
+          hasBounds = true
+        else:
+          for axis in 0 .. 2:
+            result.minimum[axis] = min(result.minimum[axis], worldPosition[axis])
+            result.maximum[axis] = max(result.maximum[axis], worldPosition[axis])
+      result.models.add(placedModel)
+
+    if current.depth >= maxDepth:
+      continue
+    for link in readChunkLinksFromIso(imagePath, current.path):
+      var targetPath = link.path
+      if not targetPath.toLowerAscii().endsWith(".sm2"):
+        targetPath.add(".sm2")
+      let targetKey = targetPath.replace('/', '\\').toLowerAscii()
+      if targetKey in visited:
+        continue
+      pending.add((targetPath, multiply(current.transform, link.objectMatrix),
+        current.depth + 1))
+
+  if result.models.len == 0 or not hasBounds:
+    raise newException(IOError, "No linked SM2 geometry could be loaded")
   for axis in 0 .. 2:
     result.center[axis] = (result.minimum[axis] + result.maximum[axis]) * 0.5'f32
