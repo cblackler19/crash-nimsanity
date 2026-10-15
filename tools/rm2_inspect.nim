@@ -29,6 +29,13 @@ type
     byteLength: uint32
     id: uint32
 
+  VifScanSummary = object
+    commands: int
+    unpacks: int
+    unsupported: bool
+    malformed: bool
+    vectorsByAddress: array[1024, uint64]
+
 proc readU32LE(data: openArray[uint8], offset: int): uint32 =
   if offset < 0 or offset > data.len - 4:
     raise newException(IOError, "Unexpected end of file while reading a word")
@@ -47,8 +54,8 @@ proc readU16LE(data: openArray[uint8], offset: int): uint16 =
 proc alignUp(value, alignment: int): int =
   ((value + alignment - 1) div alignment) * alignment
 
-proc scanVifCommands(data: openArray[uint8], start, length: int): tuple[
-    commands: int, unpacks: int, unsupported: bool, malformed: bool] =
+proc scanVifCommands(data: openArray[uint8], start,
+    length: int): VifScanSummary =
   var cursor = start
   let limit = start + length
   var cycleLength = 0
@@ -82,6 +89,7 @@ proc scanVifCommands(data: openArray[uint8], start, length: int): tuple[
         suppliedVectors * vectorComponents * componentBits
       payloadBytes = alignUp((dataBits + 7) div 8, 4)
       inc result.unpacks
+      result.vectorsByAddress[immediate and 0x3FF] += uint64(amount)
     else:
       case opcode
       of 0x01: # STCYCL
@@ -216,6 +224,8 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
   var vifScanned = 0'u64
   var vifUnsupported = 0'u64
   var vifMalformed = 0'u64
+  var vifStreamsWithAddress = newSeq[uint64](1024)
+  var vifStreamsMatchingVertexCount = newSeq[uint64](1024)
 
   for itemIndex in 0 ..< int(sectionCount):
     let entryOffset = 12 + itemIndex * 12
@@ -275,6 +285,11 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
           inc vifScanned
           vifCommandCount += uint64(scan.commands)
           vifUnpackCount += uint64(scan.unpacks)
+          for address, vectorCount in scan.vectorsByAddress:
+            if vectorCount > 0:
+              inc vifStreamsWithAddress[address]
+              if vectorCount == uint64(vertexCount):
+                inc vifStreamsMatchingVertexCount[address]
           if scan.unsupported:
             inc vifUnsupported
           if scan.malformed:
@@ -350,6 +365,11 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
     " commands, ", vifUnpackCount, " UNPACK commands"
   echo "VIF streams with unsupported commands: ", vifUnsupported
   echo "VIF streams with truncated or misaligned command data: ", vifMalformed
+  echo "UNPACK immediate addresses matching each stream's declared vertices:"
+  for address in 0 ..< vifStreamsWithAddress.len:
+    if vifStreamsWithAddress[address] > 0:
+      echo "  address ", address, ": ", vifStreamsMatchingVertexCount[address],
+        " / ", vifStreamsWithAddress[address], " streams"
 
 proc collectSectionItemIds(sectionData: openArray[uint8],
     sectionLength: uint32): HashSet[uint32] =
