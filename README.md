@@ -56,6 +56,15 @@ nim c --path:src --out:tools/rm2_inspect tools/rm2_inspect.nim
 
 On Windows, Nim adds the `.exe` extension to the output. Substitute the tool name to build another inspector.
 
+To create a candidate WAV from type-1 record 7 in `MUSIC.MH`, build and run the audio diagnostic:
+
+```sh
+nim c --path:src --out:tools/mh_audio_export tools/mh_audio_export.nim
+tools/mh_audio_export /path/to/Crash-Twinsanity.iso 7 candidate.wav
+```
+
+This assumes one continuous mono PSX ADPCM stream per table range, takes the candidate sample rate from the record, and resets decoder history at the range boundary. Those details remain unverified; see the audio observations in [the asset investigation notes](docs/asset-investigation.md).
+
 The repository includes these utilities:
 
 | Tool | Purpose |
@@ -63,6 +72,7 @@ The repository includes these utilities:
 | `iso9660_inspect` | List ISO9660 directories or print a bounded hexadecimal file range. |
 | `bh_inspect` | Parse a `.BH` archive index and optionally check its ranges against the paired `.BD`. |
 | `mh_inspect` | Compare `.MH` records with candidate ranges in the paired `.MB`. |
+| `mh_audio_export` | Experimentally decode one type-1 `MUSIC.MH` range as mono PSX ADPCM and write a WAV, reading directly from the ISO. |
 | `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, decode PSMT8 textures and mip levels, check model-item VIF decoding coverage and linked material/submodel count agreement, inspect material/rigid-model records, and scan VIF blocks. |
 | `texture_inspect` | Load one PSMT8 texture and its mip levels through an ISO's `.BH`/`.BD` archive without extracting the resource. |
 | `model_inspect` | Decode one model's bounded VIF position, UV/color, and strip records, report per-submodel vertex/triangle counts, and list all resolving material/texture pairs. |
@@ -141,7 +151,7 @@ Game images, executables, and extracted assets are not part of this repository. 
 - [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), by Smartkin, Artem Yashin (NeoKesha), and BetaM, is MIT licensed. Its archive, section, model, rigid-model, and VIF/DMA readers informed format cross-checks; its PSMT8 mapping and model attribute/strip interpretation were adapted for the Nim implementation. The local ISO samples were parsed independently. Required MIT notices are retained in [third-party notices](docs/THIRD_PARTY_LICENSES.md).
 - [KnuxLib](https://github.com/Knuxfan24/KnuxLib), by Knuxfan24, is MIT licensed and independently recognizes the `.BH`/`.BD` archive pairing. It was used as a format reference; no code was copied.
 - [vgmstream](https://github.com/vgmstream/vgmstream), by its contributors and licensed under ISC, provided a reference interpretation for the `MSVp` music headers; no code was copied.
-- [FFmpeg](https://github.com/FFmpeg/FFmpeg) provided a reference for the PSX ADPCM block-header scan in the music research tool; no code was copied.
+- [FFmpeg](https://github.com/FFmpeg/FFmpeg) provided references for the PSX ADPCM block-header scan and diagnostic decoder; no code was copied.
 - The full source list, attributions, and research limitations are maintained in [the asset investigation notes](docs/asset-investigation.md).
 
 ## License
