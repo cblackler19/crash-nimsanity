@@ -70,6 +70,7 @@ type PreviewAssets = object
   showTexture: bool
   showModel: bool
   useCandidateMaterialOrder: bool
+  showStaticGeometry: bool
   modelId: uint32
   materialId: uint32
   textureId: uint32
@@ -117,6 +118,18 @@ proc loadPreviewAssets(): PreviewAssets =
     except CatchableError as error:
       quit("Could not load ISO placement preview: " & error.msg, 1)
     return
+  if paramStr(1) == "--chunk":
+    if paramCount() != 3:
+      quit("Usage: main --chunk image.iso sm2-resource-path", 1)
+    try:
+      result.scene = loadStaticGeometryFromIso(paramStr(2), paramStr(3))
+      result.showStaticGeometry = true
+      echo "Loaded ", result.scene.models.len,
+        " SM2 models as untransformed geometry candidates"
+      echo "Decoded positions are drawn without inferred object transforms"
+    except CatchableError as error:
+      quit("Could not load ISO static-geometry preview: " & error.msg, 1)
+    return
   if paramCount() == 3:
     let textureId = parseId(paramStr(3), "Texture ID")
     try:
@@ -133,7 +146,8 @@ proc loadPreviewAssets(): PreviewAssets =
     quit("Usage: main [image.iso resource-path texture-id] | " &
       "main --model image.iso resource-path model-id [texture-id | " &
       "--candidate-material-order] | main --placements image.iso " &
-      "resource-path outer-index nested-index [record-limit]", 1)
+      "resource-path outer-index nested-index [record-limit] | " &
+      "main --chunk image.iso sm2-resource-path", 1)
 
   let modelId = parseId(paramStr(4), "Model ID")
   try:
@@ -272,6 +286,8 @@ proc main() =
 
   let windowTitle = if preview.showPlacements:
     "crash-nimsanity - experimental placement preview"
+  elif preview.showStaticGeometry:
+    "crash-nimsanity - experimental SM2 geometry preview"
   elif preview.showModel and preview.useCandidateMaterialOrder:
     "crash-nimsanity - candidate material preview"
   elif preview.showModel:
@@ -321,7 +337,7 @@ proc main() =
   var previewMesh: Mesh
   var sceneMeshes: seq[Mesh]
   var sceneTextures: seq[Texture2D]
-  if preview.showPlacements:
+  if preview.showPlacements or preview.showStaticGeometry:
     for sceneModel in preview.scene.models:
       sceneMeshes.add(uploadMesh(makeSceneVertices(sceneModel.model)))
       sceneTextures.add(uploadTexture2D(sceneModel.texture))
@@ -340,7 +356,7 @@ proc main() =
     previewTexture = uploadTexture2D(preview.texture)
   var camera = initCamera()
   var projectionFar = 100.0'f32
-  if preview.showPlacements:
+  if preview.showPlacements or preview.showStaticGeometry:
     let spanX = preview.scene.maximum[0] - preview.scene.minimum[0]
     let spanY = preview.scene.maximum[1] - preview.scene.minimum[1]
     let spanZ = preview.scene.maximum[2] - preview.scene.minimum[2]
@@ -412,7 +428,8 @@ proc main() =
 
     glUniformMatrix4fv(viewLocation, 1, GLboolean(0), view[0].addr)
     glUniformMatrix4fv(projectionLocation, 1, GLboolean(0), projection[0].addr)
-    let useTexture = preview.showTexture or preview.showPlacements
+    let useTexture = preview.showTexture or preview.showPlacements or
+      preview.showStaticGeometry
     glUniform1i(useTextureLocation, GLint(if useTexture: 1 else: 0))
     if useTexture:
       glUniform1i(textureLocation, 0)
@@ -422,9 +439,18 @@ proc main() =
         glUniformMatrix4fv(modelLocation, 1, GLboolean(0), transform[0].addr)
         sceneTextures[placement.modelIndex].bindTexture()
         sceneMeshes[placement.modelIndex].draw()
+    elif preview.showStaticGeometry:
+      let centerTransform = translationMatrix(-preview.scene.center[0],
+        -preview.scene.center[1], -preview.scene.center[2])
+      glUniformMatrix4fv(modelLocation, 1, GLboolean(0),
+        centerTransform[0].addr)
+      for modelIndex in 0 ..< preview.scene.models.len:
+        sceneTextures[modelIndex].bindTexture()
+        sceneMeshes[modelIndex].draw()
     else:
       glUniformMatrix4fv(modelLocation, 1, GLboolean(0), model[0].addr)
-    if not preview.showPlacements and preview.showTexture:
+    if not preview.showPlacements and not preview.showStaticGeometry and
+        preview.showTexture:
       glUniform1i(textureLocation, 0)
       if preview.useCandidateMaterialOrder:
         for submodelIndex, texture in candidateTextures:
@@ -436,12 +462,12 @@ proc main() =
       else:
         previewTexture.bindTexture()
         previewMesh.draw()
-    elif not preview.showPlacements:
+    elif not preview.showPlacements and not preview.showStaticGeometry:
       previewMesh.draw()
 
     window.swapBuffers()
 
-  if not preview.showPlacements:
+  if not preview.showPlacements and not preview.showStaticGeometry:
     previewMesh.destroy()
   previewTexture.destroy()
   for texture in candidateTextures.mitems:
