@@ -499,9 +499,7 @@ proc loadPlacementModelsFromIso*(imagePath, resourcePath: string,
       raise newException(IOError, "Object-instance identity fields are truncated")
     let objectId = readU16LE(instanceData, cursor)
     let linkedOgis = codeTables.objectOgis.getOrDefault(uint32(objectId), @[])
-    var hasLoadableModel = false
-    # Several OGI links can lead back to the same rigid model for one object.
-    var instanceModels = initHashSet[string]()
+    var selectedModelIndex = -1
 
     for ogiId in linkedOgis:
       if ogiId == high(uint16):
@@ -521,57 +519,54 @@ proc loadPlacementModelsFromIso*(imagePath, resourcePath: string,
           archiveModels.modelPaths[geometryId]
         let modelKey = modelPath.toLowerAscii() & ":" & $geometryId & ":" &
           rigidLocation.resourcePath.toLowerAscii() & ":" & $rigidId
-        if modelKey in instanceModels:
-          continue
-
-        var modelIndex: int
         if modelKey in loadedModels:
-          modelIndex = loadedModels[modelKey]
-        else:
+          selectedModelIndex = loadedModels[modelKey]
+          break
+        try:
+          var sceneModel = SceneModel(
+            modelId: geometryId,
+            modelPath: modelPath,
+            materialPath: rigidLocation.resourcePath,
+            model: loadModelFromIso(imagePath, modelPath, geometryId)
+          )
           try:
-            var sceneModel = SceneModel(
-              modelId: geometryId,
-              modelPath: modelPath,
-              materialPath: rigidLocation.resourcePath,
-              model: loadModelFromIso(imagePath, modelPath, geometryId)
-            )
-            try:
-              let textureLink = findTextureForModelFromIso(imagePath,
-                rigidLocation.resourcePath, geometryId)
-              sceneModel.textureId = textureLink.textureId
-              sceneModel.texture = loadTextureFromIso(imagePath,
-                rigidLocation.resourcePath, textureLink.textureId)
-              sceneModel.hasTexture = true
-            except CatchableError as error:
-              echo "Placement model ", geometryId,
-                " has no resolving texture; drawing decoded vertex colors: ",
-                error.msg
-
-            modelIndex = result.models.len
-            result.models.add(sceneModel)
-            loadedModels[modelKey] = modelIndex
-            if sceneModel.hasTexture:
-              echo "Placement model ", geometryId, " from ", modelPath,
-                " using texture ", sceneModel.textureId, " in ",
-                rigidLocation.resourcePath
+            let textureLink = findTextureForModelFromIso(imagePath,
+              rigidLocation.resourcePath, geometryId)
+            sceneModel.textureId = textureLink.textureId
+            sceneModel.texture = loadTextureFromIso(imagePath,
+              rigidLocation.resourcePath, textureLink.textureId)
+            sceneModel.hasTexture = true
           except CatchableError as error:
-            echo "Skipping model candidate ", geometryId, ": ", error.msg
-            continue
+            echo "Placement model ", geometryId,
+              " has no resolving texture; drawing decoded vertex colors: ",
+              error.msg
 
-        instanceModels.incl(modelKey)
-        hasLoadableModel = true
-        result.placements.add(ScenePlacement(
-          instanceId: instanceId,
-          objectId: objectId,
-          modelIndex: modelIndex,
-          chunkTransform: identityMatrix(),
-          position: position,
-          rotations: rotations
-        ))
+          selectedModelIndex = result.models.len
+          result.models.add(sceneModel)
+          loadedModels[modelKey] = selectedModelIndex
+          if sceneModel.hasTexture:
+            echo "Placement model ", geometryId, " from ", modelPath,
+              " using texture ", sceneModel.textureId, " in ",
+              rigidLocation.resourcePath
+          break
+        except CatchableError as error:
+          echo "Skipping model candidate ", geometryId, ": ", error.msg
+      if selectedModelIndex >= 0:
+        break
 
-    if not hasLoadableModel:
+    if selectedModelIndex < 0:
       echo "Placement record ", instanceId, " (object ", objectId,
         ") has no loadable model candidate"
+      continue
+
+    result.placements.add(ScenePlacement(
+      instanceId: instanceId,
+      objectId: objectId,
+      modelIndex: selectedModelIndex,
+      chunkTransform: identityMatrix(),
+      position: position,
+      rotations: rotations
+    ))
 
   if result.placements.len == 0:
     raise newException(IOError, "No loadable placed models found in this group")
