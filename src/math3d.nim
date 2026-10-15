@@ -1,0 +1,56 @@
+import std/math
+
+type
+  Vec3* = object
+    x*, y*, z*: float32
+
+  Mat4* = array[16, float32]
+
+proc multiply*(a, b: Mat4): Mat4 =
+  # Matrices use OpenGL's column-major storage convention.
+  for column in 0 .. 3:
+    for row in 0 .. 3:
+      for i in 0 .. 3:
+        result[column * 4 + row] += a[i * 4 + row] * b[column * 4 + i]
+
+proc rotationMatrixX*(angle: float32): Mat4 =
+  let c = cos(angle)
+  let s = sin(angle)
+
+  result = [
+    1.0'f32, 0.0'f32, 0.0'f32, 0.0'f32,
+    0.0'f32, c,        s,        0.0'f32,
+    0.0'f32, -s,       c,        0.0'f32,
+    0.0'f32, 0.0'f32, 0.0'f32, 1.0'f32
+  ]
+
+proc rotationMatrixY*(angle: float32): Mat4 =
+  let c = cos(angle)
+  let s = sin(angle)
+
+  result = [
+    c,        0.0'f32, -s,       0.0'f32,
+    0.0'f32, 1.0'f32, 0.0'f32, 0.0'f32,
+    s,        0.0'f32, c,        0.0'f32,
+    0.0'f32, 0.0'f32, 0.0'f32, 1.0'f32
+  ]
+
+proc translationMatrix*(x, y, z: float32): Mat4 =
+  result = [
+    1.0'f32, 0.0'f32, 0.0'f32, 0.0'f32,
+    0.0'f32, 1.0'f32, 0.0'f32, 0.0'f32,
+    0.0'f32, 0.0'f32, 1.0'f32, 0.0'f32,
+    x,        y,        z,        1.0'f32
+  ]
+
+proc perspectiveMatrix*(fovRadians, aspect, nearPlane, farPlane: float32): Mat4 =
+  let f = 1.0'f32 / tan(fovRadians / 2.0'f32)
+
+  result = [
+    f / aspect, 0.0'f32, 0.0'f32, 0.0'f32,
+    0.0'f32, f, 0.0'f32, 0.0'f32,
+    0.0'f32, 0.0'f32,
+    (farPlane + nearPlane) / (nearPlane - farPlane), -1.0'f32,
+    0.0'f32, 0.0'f32,
+    (2.0'f32 * farPlane * nearPlane) / (nearPlane - farPlane), 0.0'f32
+  ]
