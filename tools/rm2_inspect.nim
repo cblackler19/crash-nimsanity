@@ -1551,7 +1551,7 @@ proc inspectIsoResource(imagePath, requestedPath: string, outerSectionIndex,
         except ValueError:
           raise newException(IOError, "Hex range offset and size must be integers")
         dumpHexRange(childData, hexOffset, hexByteCount)
-      elif section.id == 11 and childSection.id == 2:
+      elif section.id in [6'u32, 11'u32] and childSection.id == 2:
         var rigidMaterialCounts = initTable[uint32, uint32]()
         for sibling in nestedSections:
           if sibling.id in [3'u32, 6'u32]:
@@ -1564,7 +1564,8 @@ proc inspectIsoResource(imagePath, requestedPath: string, outerSectionIndex,
               break
         inspectModelItems(childData, childSection.byteLength,
           rigidMaterialCounts)
-      elif section.id == 11 and childSection.id in [3'u32, 6'u32]:
+      elif section.id in [6'u32, 11'u32] and
+          childSection.id in [3'u32, 6'u32]:
         var modelIds = initHashSet[uint32]()
         var materialIds = initHashSet[uint32]()
         for sibling in nestedSections:
@@ -1580,9 +1581,9 @@ proc inspectIsoResource(imagePath, requestedPath: string, outerSectionIndex,
               modelIds = siblingIds
         inspectRigidModels(childData, childSection.byteLength, modelIds,
           materialIds)
-      elif section.id == 11 and childSection.id == 0:
+      elif section.id in [6'u32, 11'u32] and childSection.id == 0:
         inspectTextureItems(childData, childSection.byteLength)
-      elif section.id == 11 and childSection.id == 1:
+      elif section.id in [6'u32, 11'u32] and childSection.id == 1:
         var textureIds = initHashSet[uint32]()
         for sibling in nestedSections:
           if sibling.id == 0:
