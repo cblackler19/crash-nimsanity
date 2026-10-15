@@ -37,6 +37,8 @@ At the `MSVp` range starts, the big-endian word at byte 16 matches `.MH` word 3 
 
 In `MUSIC.MH`, records 7 through 10 have word 0 equal to `1`. Their word 2 values are `0`, `3932160`, `8912896`, and `13631488`; for each record after the first, word 2 equals the prior record's word 2 plus its word 1. This is consistent with a cumulative range or offset field across those four records, though the address space and meaning are still unknown.
 
+All 62 type-1 `MUSIC.MH` ranges begin with 16 zero bytes. In the first 228 bytes, 26 ranges have little-endian `0x000C` at every 16-byte step from offset `0x10` through `0xD0`; only record 7 has little-endian `0x44` at offset `0xE0`. These byte patterns do not yet identify a header or codec. `mh_inspect` reports these counts while reading each range directly from the ISO.
+
 ## `.BH` / `.BD` and executable clues
 
 `CRASH.BH` begins with the little-endian word `1281` (`0x501`). After that word, the file parses exactly into 612 variable-length entries. Each entry contains a little-endian path byte length, that many path bytes, a little-endian data offset, and a little-endian data length. The entries consume the index to EOF. In table order, every data offset equals the prior range's end, starting at byte zero, and the final range ends at byte `890464828`, exactly the length of `CRASH.BD`.

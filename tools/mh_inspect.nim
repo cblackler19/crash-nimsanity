@@ -28,6 +28,9 @@ proc readU32LE(data: openArray[uint8], offset: int): uint32 =
     (uint32(data[offset + 2]) shl 16) or
     (uint32(data[offset + 3]) shl 24)
 
+proc readU16LE(data: openArray[uint8], offset: int): uint16 =
+  uint16(data[offset]) or (uint16(data[offset + 1]) shl 8)
+
 proc readU32BE(data: openArray[uint8], offset: int): uint32 =
   (uint32(data[offset]) shl 24) or
     (uint32(data[offset + 1]) shl 16) or
@@ -79,6 +82,11 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
   var typeZeroWordCheckCount = 0
   var typeZeroSamples = 0
   var sampleCount = 0
+  var typeOneZeroPrefixCount = 0
+  var typeOneStridePatternCount = 0
+  var typeOneEndMarkerCount = 0
+  var typeOneStridePatternRecords: seq[int]
+  var typeOneEndMarkerRecords: seq[int]
 
   for recordIndex in 0 ..< int(declaredCount):
     let base = TableHeaderSize + recordIndex * RecordSize
@@ -100,6 +108,31 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
         inc alignedTypeOneCount
       if byteOffset mod 16 == 0:
         inc alignedTypeOneOffsetCount
+
+      if byteLength >= 16:
+        let prefix = image.readSlice(dataEntry, int64(byteOffset),
+          min(228, int(byteLength)))
+        var zeroPrefix = true
+        for index in 0 ..< 16:
+          if prefix[index] != 0:
+            zeroPrefix = false
+            break
+        if zeroPrefix:
+          inc typeOneZeroPrefixCount
+
+        if prefix.len >= 228:
+          var stridePattern = true
+          for offset in countup(16, 208, 16):
+            if readU16LE(prefix, offset) != 12:
+              stridePattern = false
+              break
+          if stridePattern:
+            inc typeOneStridePatternCount
+            typeOneStridePatternRecords.add(recordIndex)
+          if readU32LE(prefix, 224) == 0x44:
+            inc typeOneEndMarkerCount
+            typeOneEndMarkerRecords.add(recordIndex)
+
       if sampleCount < 4:
         let sample = image.readSlice(dataEntry, int64(byteOffset),
           min(32, int(byteLength)))
@@ -143,6 +176,14 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
     " / ", typeOneCount
   echo "Type-1 offsets divisible by 16: ", alignedTypeOneOffsetCount,
     " / ", typeOneCount
+  echo "Type-1 ranges with a 16-byte zero prefix: ", typeOneZeroPrefixCount,
+    " / ", typeOneCount
+  echo "Type-1 ranges with 0x000C words at +0x10..+0xD0: ",
+    typeOneStridePatternCount, " / ", typeOneCount
+  echo "  Matching record indices: ", typeOneStridePatternRecords
+  echo "Type-1 ranges with 0x44 at +0xE0: ", typeOneEndMarkerCount,
+    " / ", typeOneCount
+  echo "  Matching record indices: ", typeOneEndMarkerRecords
 
 proc main() =
   if paramCount() notin [1, 3]:
