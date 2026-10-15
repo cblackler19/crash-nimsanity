@@ -1588,7 +1588,8 @@ proc inspectIsoResource(imagePath, requestedPath: string, outerSectionIndex,
       dumpHexRange(sectionData, hexOffset, hexByteCount)
       return
 
-    if section.id == 5 and paramCount() == 3:
+    if section.id == 5 and archiveEntry.path.toLowerAscii().endsWith(".sm2") and
+        paramCount() == 3:
       let sectionData = image.readSlice(dataFile, sectionOffset,
         int(section.byteLength))
       inspectChunkLinks(sectionData)
