@@ -27,6 +27,8 @@ type
     vertices*: seq[ModelVertex]
     submodelCount*: int
     triangleCount*: int
+    submodelVertexCounts*: seq[int]
+    submodelTriangleCounts*: seq[int]
 
 proc readU16LE(data: openArray[uint8], offset: int): uint16 =
   if offset < 0 or offset > data.len - 2:
@@ -185,6 +187,7 @@ proc decodeModelItem*(sectionData: openArray[uint8], itemOffset,
     if vifLength > itemLimit - cursor - 4:
       raise newException(ValueError, "VIF data exceeds model item bounds")
     let vertices = decodeSubmodel(sectionData, cursor, vifLength, vertexCount)
+    let expandedVertexStart = result.vertices.len
     cursor += vifLength
     let blobLength = int(readU32LE(sectionData, cursor))
     cursor += 4
@@ -204,6 +207,10 @@ proc decodeModelItem*(sectionData: openArray[uint8], itemOffset,
         inc result.triangleCount
 
     inc result.submodelCount
+    result.submodelVertexCounts.add(vertices.len)
+    result.submodelTriangleCounts.add(
+      (result.vertices.len - expandedVertexStart) div 3
+    )
 
   if cursor != itemLimit:
     raise newException(ValueError, "Model item contains unparsed trailing bytes")
