@@ -139,8 +139,17 @@ proc loadPreviewAssets(): PreviewAssets =
       result.scene = loadLinkedChunkGeometryFromIso(paramStr(2), paramStr(3),
         maxDepth)
       result.showStaticGeometry = true
-      echo "Loaded ", result.scene.models.len,
+      result.showPlacements = result.scene.placements.len > 0
+      var staticModelCount = 0
+      for sceneModel in result.scene.models:
+        if sceneModel.isStaticGeometry:
+          inc staticModelCount
+      echo "Loaded ", staticModelCount,
         " linked SM2 model items across up to ", maxDepth, " link levels"
+      echo "Loaded ", result.scene.models.len - staticModelCount,
+        " RM2 placement-model variants (deduplicated per resource)"
+      echo "Loaded ", result.scene.placements.len,
+        " linked RM2 object model instances"
       echo "Neighbor transforms use the experimental ObjectMatrix interpretation"
     except CatchableError as error:
       quit("Could not load ISO chunk-link preview: " & error.msg, 1)
@@ -263,12 +272,13 @@ proc placementMatrix(placement: ScenePlacement,
   let rotateY = rotationMatrixY(previewAngle(placement.rotations[2]))
   let rotateZ = rotationMatrixZ(previewAngle(placement.rotations[4]))
   let rotation = multiply(rotateZ, multiply(rotateY, rotateX))
-  let position = translationMatrix(
-    placement.position[0] - scene.center[0],
-    placement.position[1] - scene.center[1],
-    placement.position[2] - scene.center[2]
-  )
-  multiply(position, rotation)
+  let localTransform = multiply(translationMatrix(
+    placement.position[0], placement.position[1], placement.position[2]),
+    rotation)
+  let regionTransform = multiply(placement.chunkTransform, localTransform)
+  let centerTransform = translationMatrix(-scene.center[0],
+    -scene.center[1], -scene.center[2])
+  multiply(centerTransform, regionTransform)
 
 proc compileShader(kind: GLenum, source: string): GLuint =
   result = glCreateShader(kind)
@@ -300,7 +310,9 @@ proc main() =
   glfwWindowHint(GLFWOpenglProfile, GLFW_OPENGL_CORE_PROFILE)
   glfwWindowHint(GLFWOpenglForwardCompat, GLFW_TRUE)
 
-  let windowTitle = if preview.showPlacements:
+  let windowTitle = if preview.showStaticGeometry and preview.showPlacements:
+    "crash-nimsanity - experimental linked chunk region"
+  elif preview.showPlacements:
     "crash-nimsanity - experimental placement preview"
   elif preview.showStaticGeometry:
     "crash-nimsanity - experimental SM2 geometry preview"
@@ -456,13 +468,19 @@ proc main() =
       for placement in preview.scene.placements:
         let transform = placementMatrix(placement, preview.scene)
         glUniformMatrix4fv(modelLocation, 1, GLboolean(0), transform[0].addr)
-        sceneTextures[placement.modelIndex].bindTexture()
+        let sceneModel = preview.scene.models[placement.modelIndex]
+        glUniform1i(useTextureLocation,
+          GLint(if sceneModel.hasTexture: 1 else: 0))
+        if sceneModel.hasTexture:
+          sceneTextures[placement.modelIndex].bindTexture()
         sceneMeshes[placement.modelIndex].draw()
-    elif preview.showStaticGeometry:
+    if preview.showStaticGeometry:
       let centerTransform = translationMatrix(-preview.scene.center[0],
         -preview.scene.center[1], -preview.scene.center[2])
       for modelIndex in 0 ..< preview.scene.models.len:
         let sceneModel = preview.scene.models[modelIndex]
+        if not sceneModel.isStaticGeometry:
+          continue
         let transform = multiply(centerTransform,
           sceneModel.modelTransform)
         glUniformMatrix4fv(modelLocation, 1, GLboolean(0), transform[0].addr)
