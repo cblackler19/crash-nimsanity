@@ -31,6 +31,14 @@ type
     byteLength: uint32
     id: uint32
 
+  ModelLocation = object
+    resourcePath: string
+    modelId: uint32
+
+  ArchiveModelIndex = object
+    modelIds: Table[uint32, string]
+    rigidModels: Table[uint32, ModelLocation]
+
   UvSample = object
     u, v: float32
     color: array[4, uint8]
@@ -770,6 +778,56 @@ proc collectSectionItemIds(sectionData: openArray[uint8],
       raise newException(IOError, "Model item range extends beyond its section")
     result.incl(itemId)
 
+proc collectSectionTableIds(sectionTable: openArray[uint8],
+    sectionLength: uint32): HashSet[uint32] =
+  if sectionTable.len < 12:
+    raise newException(IOError, "Section table is shorter than its header")
+
+  let itemCount = readU32LE(sectionTable, 4)
+  let tableLength = 12'u64 + uint64(itemCount) * 12'u64
+  if tableLength > uint64(sectionTable.len) or tableLength > uint64(sectionLength):
+    raise newException(IOError, "Section item table extends beyond its section")
+
+  result = initHashSet[uint32]()
+  for itemIndex in 0 ..< int(itemCount):
+    let entryOffset = 12 + itemIndex * 12
+    let itemOffset = readU32LE(sectionTable, entryOffset)
+    let itemLength = readU32LE(sectionTable, entryOffset + 4)
+    let itemId = readU32LE(sectionTable, entryOffset + 8)
+    if itemOffset < tableLength or
+        uint64(itemOffset) + uint64(itemLength) > uint64(sectionLength):
+      raise newException(IOError, "Section item range extends beyond its section")
+    result.incl(itemId)
+
+proc collectRigidModelLinks(sectionData: openArray[uint8],
+    sectionLength: uint32): Table[uint32, uint32] =
+  if sectionData.len < 12:
+    raise newException(IOError, "Rigid-model section is shorter than its header")
+
+  let itemCount = readU32LE(sectionData, 4)
+  let tableLength = 12'u64 + uint64(itemCount) * 12'u64
+  if tableLength > uint64(sectionData.len) or
+      tableLength > uint64(sectionLength):
+    raise newException(IOError, "Rigid-model table extends beyond its section")
+
+  result = initTable[uint32, uint32]()
+  for itemIndex in 0 ..< int(itemCount):
+    let entryOffset = 12 + itemIndex * 12
+    let itemOffset = readU32LE(sectionData, entryOffset)
+    let itemLength = readU32LE(sectionData, entryOffset + 4)
+    let itemId = readU32LE(sectionData, entryOffset + 8)
+    let itemEnd = uint64(itemOffset) + uint64(itemLength)
+    if itemOffset < tableLength or itemEnd > uint64(sectionLength) or
+        itemEnd > uint64(sectionData.len) or itemLength < 12:
+      raise newException(IOError, "Rigid-model record range is malformed")
+
+    let materialCount = readU32LE(sectionData, int(itemOffset) + 4)
+    let meshOffset = uint64(itemOffset) + 8'u64 +
+      uint64(materialCount) * 4'u64
+    if meshOffset + 4'u64 > itemEnd:
+      raise newException(IOError, "Rigid-model mesh reference exceeds its record")
+    result[itemId] = readU32LE(sectionData, int(meshOffset))
+
 proc collectGameObjectGraphicsInfoIds(sectionData: openArray[uint8],
     sectionLength: uint32): Table[uint32, seq[uint16]] =
   if sectionData.len < 12:
@@ -820,6 +878,52 @@ proc collectGameObjectGraphicsInfoIds(sectionData: openArray[uint8],
     for linkIndex in 0 ..< int(graphicsInfoCount):
       graphicsInfoIds.add(readU16LE(sectionData, cursor + linkIndex * 2))
     result[itemId] = graphicsInfoIds
+
+proc collectGraphicsInfoModelIds(sectionData: openArray[uint8],
+    sectionLength: uint32): Table[uint32, seq[uint32]] =
+  if sectionData.len < 12:
+    raise newException(IOError, "Graphics-info section is shorter than its header")
+
+  let itemCount = readU32LE(sectionData, 4)
+  let tableLength = 12'u64 + uint64(itemCount) * 12'u64
+  if tableLength > uint64(sectionData.len) or
+      tableLength > uint64(sectionLength):
+    raise newException(IOError, "Graphics-info table extends beyond its section")
+
+  result = initTable[uint32, seq[uint32]]()
+  for itemIndex in 0 ..< int(itemCount):
+    let entryOffset = 12 + itemIndex * 12
+    let itemOffset = readU32LE(sectionData, entryOffset)
+    let itemLength = readU32LE(sectionData, entryOffset + 4)
+    let itemId = readU32LE(sectionData, entryOffset + 8)
+    let itemEnd = uint64(itemOffset) + uint64(itemLength)
+    if itemOffset < tableLength or itemEnd > uint64(sectionLength) or
+        itemEnd > uint64(sectionData.len) or itemLength < 56:
+      raise newException(IOError, "Graphics-info record range is malformed")
+
+    let start = int(itemOffset)
+    let limit = int(itemEnd)
+    let jointCount = int(sectionData[start])
+    let exitPointCount = int(sectionData[start + 1])
+    let modelCount = int(sectionData[start + 5])
+    var cursor = start + 48
+
+    let jointBytes = uint64(jointCount) * 100'u64
+    let exitPointBytes = uint64(exitPointCount) * 72'u64
+    if jointBytes + exitPointBytes > uint64(limit - cursor):
+      raise newException(IOError, "Graphics-info transforms exceed their record")
+    cursor += int(jointBytes + exitPointBytes)
+
+    if modelCount > limit - cursor:
+      raise newException(IOError, "Graphics-info joint links exceed their record")
+    cursor += modelCount
+    if uint64(modelCount) * 4'u64 > uint64(limit - cursor):
+      raise newException(IOError, "Graphics-info model links exceed their record")
+
+    var modelIds: seq[uint32]
+    for modelIndex in 0 ..< modelCount:
+      modelIds.add(readU32LE(sectionData, cursor + modelIndex * 4))
+    result[itemId] = modelIds
 
 proc collectRigidMaterialCounts(sectionData: openArray[uint8],
     sectionLength: uint32): Table[uint32, uint32] =
@@ -1147,7 +1251,9 @@ proc skipInstanceWordList(data: openArray[uint8], cursor: var int,
 proc inspectObjectInstances(sectionData: openArray[uint8],
     sectionLength: uint32, objectDefinitionIds: HashSet[uint32],
     objectGraphicsInfoIds: Table[uint32, seq[uint16]],
-    graphicsInfoIds: HashSet[uint32]) =
+    graphicsInfoIds: HashSet[uint32],
+    graphicsInfoModelIds: Table[uint32, seq[uint32]],
+    graphicsModelLocations: ArchiveModelIndex) =
   if sectionData.len < 12:
     raise newException(IOError, "Object-instance section is shorter than its header")
 
@@ -1163,6 +1269,15 @@ proc inspectObjectInstances(sectionData: openArray[uint8],
   var resolvedObjectIds = 0'u64
   var totalGraphicsInfoLinks = 0'u64
   var resolvedGraphicsInfoLinks = 0'u64
+  var totalModelLinks = 0'u64
+  var resolvedRigidModelLinks = 0'u64
+  var resolvedMeshLinks = 0'u64
+  var directModelLinks = 0'u64
+  var distinctPlacedModelIds = initHashSet[uint32]()
+  var distinctPlacedMeshIds = initHashSet[uint32]()
+  var candidateModelSamples: seq[uint32]
+  var linkedResourceSamples = initHashSet[string]()
+  var linkedResourceList: seq[string]
   echo "Object-instance records: ", itemCount
   for itemIndex in 0 ..< int(itemCount):
     let entryOffset = 12 + itemIndex * 12
@@ -1203,6 +1318,33 @@ proc inspectObjectInstances(sectionData: openArray[uint8],
         inc resolvedGraphicsInfoLinks
       else:
         allGraphicsInfoLinksResolve = false
+    var placedModelIds = initHashSet[uint32]()
+    for graphicsInfoId in linkedGraphicsInfoIds:
+      if uint32(graphicsInfoId) in graphicsInfoModelIds:
+        for modelId in graphicsInfoModelIds[uint32(graphicsInfoId)]:
+          inc totalModelLinks
+          placedModelIds.incl(modelId)
+          distinctPlacedModelIds.incl(modelId)
+          if candidateModelSamples.len < 12:
+            candidateModelSamples.add(modelId)
+          if modelId in graphicsModelLocations.rigidModels:
+            inc resolvedRigidModelLinks
+            let rigidLocation = graphicsModelLocations.rigidModels[modelId]
+            if rigidLocation.resourcePath notin linkedResourceSamples:
+              linkedResourceSamples.incl(rigidLocation.resourcePath)
+              if linkedResourceList.len < 8:
+                linkedResourceList.add(rigidLocation.resourcePath)
+            distinctPlacedMeshIds.incl(rigidLocation.modelId)
+            if rigidLocation.modelId in graphicsModelLocations.modelIds:
+              inc resolvedMeshLinks
+              let modelPath = graphicsModelLocations.modelIds[
+                rigidLocation.modelId]
+              if modelPath notin linkedResourceSamples:
+                linkedResourceSamples.incl(modelPath)
+                if linkedResourceList.len < 8:
+                  linkedResourceList.add(modelPath)
+          elif modelId in graphicsModelLocations.modelIds:
+            inc directModelLinks
     cursor += 6
     cursor += 4
     let flags = readU32LE(sectionData, cursor)
@@ -1223,6 +1365,7 @@ proc inspectObjectInstances(sectionData: openArray[uint8],
       " definition-resolves=", objectDefinitionResolves,
       " ogi-count=", linkedGraphicsInfoIds.len,
       " ogis-resolve=", allGraphicsInfoLinksResolve,
+      " candidate-models=", placedModelIds.len,
       " position=", position[0 .. 2], " rotations=", rotations,
       " ref-lists=", instanceReferences, "/", positionReferences, "/",
       pathReferences, " flags=0x", toHex(flags, 8), " properties=",
@@ -1239,6 +1382,18 @@ proc inspectObjectInstances(sectionData: openArray[uint8],
     echo "Sibling Code/Object table was unavailable for this resource."
   echo "Object graphics-info links resolving in sibling Code/OGI table: ",
     resolvedGraphicsInfoLinks, " / ", totalGraphicsInfoLinks
+  echo "Distinct candidate rigid-model IDs referenced by these placements: ",
+    distinctPlacedModelIds.len
+  echo "First candidate rigid-model IDs: ", candidateModelSamples
+  echo "OGI model links resolving to RM2/SM2 rigid-model records: ",
+    resolvedRigidModelLinks, " / ", totalModelLinks
+  echo "Those rigid-model links resolving to graphics Model IDs: ",
+    resolvedMeshLinks, " / ", resolvedRigidModelLinks
+  echo "OGI links resolving directly to graphics Model IDs: ",
+    directModelLinks
+  echo "Distinct geometry Model IDs reached through rigid-model links: ",
+    distinctPlacedMeshIds.len
+  echo "Sample resources in resolved placement chains: ", linkedResourceList
 
 proc readSectionTable(image: IsoImage, dataFile: IsoEntry, offset: int64,
     sectionLength: uint32): seq[uint8] =
@@ -1258,6 +1413,68 @@ proc readSectionTable(image: IsoImage, dataFile: IsoEntry, offset: int64,
     raise newException(IOError, "Section table extends beyond its section")
 
   image.readSlice(dataFile, offset, int(tableLength))
+
+proc collectArchiveModelLocations(image: IsoImage, dataFile: IsoEntry,
+    indexData: openArray[uint8]): ArchiveModelIndex =
+  result.modelIds = initTable[uint32, string]()
+  result.rigidModels = initTable[uint32, ModelLocation]()
+  var indexCursor = 4
+  while indexCursor < indexData.len:
+    let archiveEntry = parseArchiveEntry(indexData, indexCursor)
+    let lowerPath = archiveEntry.path.toLowerAscii()
+    let isRm2 = lowerPath.endsWith(".rm2")
+    let isSm2 = lowerPath.endsWith(".sm2")
+    if not (isRm2 or isSm2) or
+        uint64(archiveEntry.dataOffset) + uint64(archiveEntry.dataLength) >
+          uint64(dataFile.byteLength):
+      continue
+
+    try:
+      let resourceOffset = int64(archiveEntry.dataOffset)
+      let rootTable = readSectionTable(image, dataFile, resourceOffset,
+        archiveEntry.dataLength)
+      let rootCount = readU32LE(rootTable, 4)
+      for rootIndex in 0 ..< int(rootCount):
+        let rootEntryOffset = 12 + rootIndex * 12
+        let rootOffset = readU32LE(rootTable, rootEntryOffset)
+        let rootLength = readU32LE(rootTable, rootEntryOffset + 4)
+        let rootId = readU32LE(rootTable, rootEntryOffset + 8)
+        if rootId != (if isRm2: 11'u32 else: 6'u32):
+          continue
+
+        let graphicsTable = readSectionTable(image, dataFile,
+          resourceOffset + int64(rootOffset), rootLength)
+        let graphicsCount = readU32LE(graphicsTable, 4)
+        for graphicsIndex in 0 ..< int(graphicsCount):
+          let graphicsEntryOffset = 12 + graphicsIndex * 12
+          let graphicsOffset = readU32LE(graphicsTable, graphicsEntryOffset)
+          let graphicsLength = readU32LE(graphicsTable,
+            graphicsEntryOffset + 4)
+          let graphicsChildId = readU32LE(graphicsTable,
+            graphicsEntryOffset + 8)
+          if graphicsChildId notin [2'u32, 3'u32]:
+            continue
+          let modelOffset = resourceOffset + int64(rootOffset) +
+            int64(graphicsOffset)
+          if graphicsChildId == 2:
+            let modelTable = readSectionTable(image, dataFile, modelOffset,
+              graphicsLength)
+            for modelId in collectSectionTableIds(modelTable, graphicsLength):
+              if modelId notin result.modelIds:
+                result.modelIds[modelId] = archiveEntry.path
+          else:
+            let rigidModelData = image.readSlice(dataFile, modelOffset,
+              int(graphicsLength))
+            for rigidModelId, modelId in collectRigidModelLinks(
+                rigidModelData, graphicsLength):
+              if rigidModelId notin result.rigidModels:
+                result.rigidModels[rigidModelId] = ModelLocation(
+                  resourcePath: archiveEntry.path,
+                  modelId: modelId
+                )
+        break
+    except IOError:
+      discard
 
 proc inspectIsoResource(imagePath, requestedPath: string, outerSectionIndex,
     nestedSectionIndex: int) =
@@ -1375,6 +1592,12 @@ proc inspectIsoResource(imagePath, requestedPath: string, outerSectionIndex,
         var objectDefinitionIds = initHashSet[uint32]()
         var objectGraphicsInfoIds = initTable[uint32, seq[uint16]]()
         var graphicsInfoIds = initHashSet[uint32]()
+        var graphicsInfoModelIds = initTable[uint32, seq[uint32]]()
+        let graphicsModelLocations = collectArchiveModelLocations(image,
+          dataFile, indexData)
+        echo "Model/rigid-model record IDs indexed across RM2 and SM2: ",
+          graphicsModelLocations.modelIds.len, "/",
+          graphicsModelLocations.rigidModels.len
         for codeSection in sections:
           if codeSection.id == 10:
             let codeOffset = resourceOffset + int64(codeSection.offset)
@@ -1398,8 +1621,28 @@ proc inspectIsoResource(imagePath, requestedPath: string, outerSectionIndex,
                   graphicsInfoIds = collectSectionItemIds(objectData,
                     codeChildLength)
             break
+        if graphicsInfoIds.len > 0:
+          for codeSection in sections:
+            if codeSection.id == 10:
+              let codeOffset = resourceOffset + int64(codeSection.offset)
+              let codeHeader = readSectionTable(image, dataFile, codeOffset,
+                codeSection.byteLength)
+              let codeCount = readU32LE(codeHeader, 4)
+              for codeIndex in 0 ..< int(codeCount):
+                let entryOffset = 12 + codeIndex * 12
+                let codeChildOffset = readU32LE(codeHeader, entryOffset)
+                let codeChildLength = readU32LE(codeHeader, entryOffset + 4)
+                let codeChildId = readU32LE(codeHeader, entryOffset + 8)
+                if codeChildId == 3:
+                  let graphicsInfoData = image.readSlice(dataFile,
+                    codeOffset + int64(codeChildOffset), int(codeChildLength))
+                  graphicsInfoModelIds = collectGraphicsInfoModelIds(
+                    graphicsInfoData, codeChildLength)
+                  break
+              break
         inspectObjectInstances(childData, childSection.byteLength,
-          objectDefinitionIds, objectGraphicsInfoIds, graphicsInfoIds)
+          objectDefinitionIds, objectGraphicsInfoIds, graphicsInfoIds,
+          graphicsInfoModelIds, graphicsModelLocations)
       else:
         echo "No specialized parser for outer section ID ", section.id,
           " and nested section ID ", childSection.id
