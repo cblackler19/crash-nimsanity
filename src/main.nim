@@ -18,9 +18,11 @@ import std/[math, os, strutils]
 import nimgl/[glfw, opengl]
 
 import camera
+import iso_model
 import iso_texture
 import math3d
 import mesh
+import ps2_model
 import ps2_texture
 import texture2d
 
@@ -56,33 +58,90 @@ out vec4 fragColor;
 
 void main() {
     if (uUseTexture != 0) {
-        fragColor = texture(uTexture, textureCoord);
+        fragColor = texture(uTexture, textureCoord) * vec4(vertexColor, 1.0);
     } else {
         fragColor = vec4(vertexColor, 1.0);
     }
 }
 """
 
-proc loadPreviewTexture(): tuple[enabled: bool, decoded: DecodedTexture] =
+type PreviewAssets = object
+  showTexture: bool
+  showModel: bool
+  texture: DecodedTexture
+  model: DecodedModel
+
+proc parseId(argument, label: string): uint32 =
+  try:
+    let parsed = parseBiggestUInt(argument)
+    if parsed > uint64(high(uint32)):
+      quit(label & " must fit in 32 bits", 1)
+    result = uint32(parsed)
+  except ValueError:
+    quit(label & " must be an unsigned integer", 1)
+
+proc loadPreviewAssets(): PreviewAssets =
   if paramCount() == 0:
     return
-  if paramCount() != 3:
-    quit("Usage: main [image.iso path-inside-CRASH.BD texture-id]", 1)
+  if paramCount() == 3:
+    let textureId = parseId(paramStr(3), "Texture ID")
+    try:
+      result.texture = loadTextureFromIso(paramStr(1), paramStr(2), textureId)
+      result.showTexture = true
+    except CatchableError as error:
+      quit("Could not load ISO texture: " & error.msg, 1)
+    return
+  if paramCount() != 5 or paramStr(1) != "--model":
+    quit("Usage: main [image.iso resource-path texture-id] | " &
+      "main --model image.iso resource-path model-id texture-id", 1)
 
-  var textureId: uint32
+  let modelId = parseId(paramStr(4), "Model ID")
+  let textureId = parseId(paramStr(5), "Texture ID")
   try:
-    let parsedId = parseBiggestUInt(paramStr(3))
-    if parsedId > uint64(high(uint32)):
-      quit("Texture ID must fit in 32 bits", 1)
-    textureId = uint32(parsedId)
-  except ValueError:
-    quit("Texture ID must be an unsigned integer", 1)
-
-  try:
-    result.decoded = loadTextureFromIso(paramStr(1), paramStr(2), textureId)
-    result.enabled = true
+    result.model = loadModelFromIso(paramStr(2), paramStr(3), modelId)
+    result.texture = loadTextureFromIso(paramStr(2), paramStr(3), textureId)
+    result.showModel = true
+    result.showTexture = true
   except CatchableError as error:
-    quit("Could not load ISO texture: " & error.msg, 1)
+    quit("Could not load ISO model preview: " & error.msg, 1)
+
+proc makeModelVertices(model: DecodedModel): seq[Vertex] =
+  if model.vertices.len == 0:
+    raise newException(ValueError, "Model has no decoded triangle vertices")
+
+  var minimum = model.vertices[0].position
+  var maximum = minimum
+  for vertex in model.vertices:
+    for axis in 0 .. 2:
+      minimum[axis] = min(minimum[axis], vertex.position[axis])
+      maximum[axis] = max(maximum[axis], vertex.position[axis])
+
+  let center = [
+    (minimum[0] + maximum[0]) * 0.5'f32,
+    (minimum[1] + maximum[1]) * 0.5'f32,
+    (minimum[2] + maximum[2]) * 0.5'f32
+  ]
+  let largestExtent = max(maximum[0] - minimum[0],
+    max(maximum[1] - minimum[1], maximum[2] - minimum[2]))
+  if largestExtent <= 0.0'f32:
+    raise newException(ValueError, "Model has no spatial extent")
+  let scale = 1.8'f32 / largestExtent
+
+  result = newSeqOfCap[Vertex](model.vertices.len)
+  for source in model.vertices:
+    result.add(Vertex(
+      position: [
+        (source.position[0] - center[0]) * scale,
+        (source.position[1] - center[1]) * scale,
+        (source.position[2] - center[2]) * scale
+      ],
+      color: [
+        float32(source.color[0]) / 255.0'f32,
+        float32(source.color[1]) / 255.0'f32,
+        float32(source.color[2]) / 255.0'f32
+      ],
+      texCoord: source.uv
+    ))
 
 proc compileShader(kind: GLenum, source: string): GLuint =
   result = glCreateShader(kind)
@@ -105,7 +164,7 @@ proc keyDown(window: GLFWWindow, key: GLFWKey): bool =
   window.getKey(key) == GLFWPress
 
 proc main() =
-  let preview = loadPreviewTexture()
+  let preview = loadPreviewAssets()
   if not glfwInit():
     system.quit("Failed to initialize GLFW", 1)
 
@@ -114,11 +173,13 @@ proc main() =
   glfwWindowHint(GLFWOpenglProfile, GLFW_OPENGL_CORE_PROFILE)
   glfwWindowHint(GLFWOpenglForwardCompat, GLFW_TRUE)
 
-  let windowTitle = if preview.enabled:
+  let windowTitle = if preview.showModel:
+    "crash-nimsanity - ISO model preview"
+  elif preview.showTexture:
     "crash-nimsanity - ISO texture preview"
   else:
     "crash-nimsanity"
-  let window = glfwCreateWindow(800, 600, windowTitle)
+  let window = glfwCreateWindow(800, 600, windowTitle.cstring)
   if window == nil:
     glfwTerminate()
     system.quit("Failed to create window", 1)
@@ -156,10 +217,16 @@ proc main() =
   let projectionLocation = glGetUniformLocation(shaderProgram, "uProjection")
   let textureLocation = glGetUniformLocation(shaderProgram, "uTexture")
   let useTextureLocation = glGetUniformLocation(shaderProgram, "uUseTexture")
-  var previewMesh = if preview.enabled: createTexturedQuadMesh() else: createCubeMesh()
+  var previewMesh: Mesh
+  if preview.showModel:
+    previewMesh = uploadMesh(makeModelVertices(preview.model))
+  elif preview.showTexture:
+    previewMesh = createTexturedQuadMesh()
+  else:
+    previewMesh = createCubeMesh()
   var previewTexture: Texture2D
-  if preview.enabled:
-    previewTexture = uploadTexture2D(preview.decoded)
+  if preview.showTexture:
+    previewTexture = uploadTexture2D(preview.texture)
   var camera = initCamera()
 
   glEnable(GL_DEPTH_TEST)
@@ -203,7 +270,7 @@ proc main() =
     glUseProgram(shaderProgram)
     let time = float32(currentTime)
     # The shader applies transforms in model, view, then projection order.
-    let model = if preview.enabled:
+    let model = if preview.showTexture and not preview.showModel:
       identityMatrix()
     else:
       multiply(rotationMatrixY(time * 0.7'f32), rotationMatrixX(time * 0.5'f32))
@@ -214,8 +281,8 @@ proc main() =
     glUniformMatrix4fv(modelLocation, 1, GLboolean(0), model[0].addr)
     glUniformMatrix4fv(viewLocation, 1, GLboolean(0), view[0].addr)
     glUniformMatrix4fv(projectionLocation, 1, GLboolean(0), projection[0].addr)
-    glUniform1i(useTextureLocation, GLint(if preview.enabled: 1 else: 0))
-    if preview.enabled:
+    glUniform1i(useTextureLocation, GLint(if preview.showTexture: 1 else: 0))
+    if preview.showTexture:
       glUniform1i(textureLocation, 0)
       previewTexture.bindTexture()
     previewMesh.draw()
