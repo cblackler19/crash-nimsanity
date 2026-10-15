@@ -64,6 +64,7 @@ The repository includes these utilities:
 | `bh_inspect` | Parse a `.BH` archive index and optionally check its ranges against the paired `.BD`. |
 | `mh_inspect` | Compare `.MH` records with candidate ranges in the paired `.MB`. |
 | `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, decode PSMT8 textures and mip levels in memory, inspect material/model/rigid-model records, and scan VIF blocks. |
+| `texture_inspect` | Load one PSMT8 texture and its mip levels through an ISO's `.BH`/`.BD` archive without extracting the resource. |
 | `elf_mips_refs` | Find direct MIPS immediate references to strings in a supplied ELF executable. |
 
 The examples below use POSIX shell syntax. In PowerShell, prefix local tools with `.` (for example, `.\tools\rm2_inspect.exe`) and use the `.exe` suffix.
@@ -82,6 +83,9 @@ tools/mh_inspect /path/to/Crash-Twinsanity.iso
 
 # Inspect the Cavern RM2 model table directly in the ISO
 tools/rm2_inspect /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2" 0 2
+
+# Load one texture and its mip levels directly from the ISO
+tools/texture_inspect /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2" 3879915471
 ```
 
 Select child section `0` to inspect the texture table and summarize dimensions, pixel formats, and transfer-buffer bounds:
