@@ -90,6 +90,9 @@ proc readU16LE(data: openArray[uint8], offset: int): uint16 =
 
   uint16(data[offset]) or (uint16(data[offset + 1]) shl 8)
 
+proc readF32LE(data: openArray[uint8], offset: int): float32 =
+  cast[float32](readU32LE(data, offset))
+
 proc dumpHexRange(data: openArray[uint8], offset, byteCount: int) =
   if offset < 0 or byteCount < 0 or offset > data.len - byteCount:
     raise newException(IOError, "Hex range extends beyond the selected section")
@@ -102,6 +105,66 @@ proc dumpHexRange(data: openArray[uint8], offset, byteCount: int) =
       stdout.write(toHex(int(data[index]), 2), " ")
     stdout.writeLine("")
     cursor = rowEnd
+
+proc skipChunkLinkTree(data: openArray[uint8], cursor: var int, limit: int,
+    nodeType: uint32, depth = 0) =
+  if (nodeType and 1'u32) == 0:
+    return
+  if depth >= 64 or cursor > limit - 30:
+    raise newException(IOError, "Chunk-link tree header exceeds its section")
+  let nextType = readU32LE(data, cursor)
+  cursor += 4 + 22
+  let blobSize = readU32LE(data, cursor)
+  cursor += 4
+  if blobSize < 320 or uint64(blobSize) > uint64(limit - cursor):
+    raise newException(IOError, "Chunk-link tree payload exceeds its section")
+  cursor += int(blobSize)
+  skipChunkLinkTree(data, cursor, limit, nextType, depth + 1)
+
+proc inspectChunkLinks(sectionData: openArray[uint8]) =
+  if sectionData.len < 4:
+    raise newException(IOError, "Chunk-link section is shorter than its count")
+  let linkCount = readU32LE(sectionData, 0)
+  if uint64(linkCount) > uint64(sectionData.len div 140):
+    raise newException(IOError, "Chunk-link count exceeds the section size")
+  var cursor = 4
+  for linkIndex in 0 ..< int(linkCount):
+    if cursor > sectionData.len - 8:
+      raise newException(IOError, "Chunk-link record header is truncated")
+    let linkType = readU32LE(sectionData, cursor)
+    let pathLength = readU32LE(sectionData, cursor + 4)
+    cursor += 8
+    if uint64(pathLength) > uint64(sectionData.len - cursor - 4):
+      raise newException(IOError, "Chunk-link path exceeds its section")
+    var path = newString(int(pathLength))
+    for pathIndex in 0 ..< path.len:
+      path[pathIndex] = char(sectionData[cursor + pathIndex])
+    cursor += path.len
+    let flags = readU32LE(sectionData, cursor)
+    cursor += 4
+    echo "Chunk link ", linkIndex, ": type=0x", toHex(linkType, 8),
+      " path=", path, " flags=0x", toHex(flags, 8)
+
+    for matrixIndex, matrixName in ["Object matrix", "Chunk matrix"]:
+      if cursor > sectionData.len - 64:
+        raise newException(IOError, matrixName & " exceeds chunk-link section")
+      echo "  ", matrixName, ":"
+      for row in 0 .. 3:
+        var values: array[4, float32]
+        for column in 0 .. 3:
+          values[column] = readF32LE(sectionData, cursor + (row * 4 + column) * 4)
+        echo "    [", values[0], ", ", values[1], ", ", values[2], ", ",
+          values[3], "]"
+      cursor += 64
+
+    if (flags and 0x80000'u32) != 0:
+      if cursor > sectionData.len - 64:
+        raise newException(IOError, "Chunk-link load wall exceeds its section")
+      cursor += 64
+    skipChunkLinkTree(sectionData, cursor, sectionData.len, linkType)
+
+  echo "Chunk links: ", linkCount, "; trailing bytes: ",
+    sectionData.len - cursor
 
 proc alignUp(value, alignment: int): int =
   ((value + alignment - 1) div alignment) * alignment
@@ -1523,6 +1586,12 @@ proc inspectIsoResource(imagePath, requestedPath: string, outerSectionIndex,
       echo "Payload for outer section index ", outerSectionIndex,
         " (id=", section.id, ", bytes=", section.byteLength, ")"
       dumpHexRange(sectionData, hexOffset, hexByteCount)
+      return
+
+    if section.id == 5 and paramCount() == 3:
+      let sectionData = image.readSlice(dataFile, sectionOffset,
+        int(section.byteLength))
+      inspectChunkLinks(sectionData)
       return
 
     let nestedHeader = readSectionTable(
