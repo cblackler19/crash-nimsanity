@@ -45,6 +45,12 @@ The independent `BDArchive.cs` reader and writer in Twinsanity Editor call the l
 
 The read-only Nim utility [`bh_inspect.nim`](../tools/bh_inspect.nim) parses this layout, reports each path and range, and can check that ranges stay within a supplied `.BD` file. The data image itself was not extracted. `CRASH.BD` begins with `03 00 00 00`; this alone does not identify its internal format.
 
+The archive index contains 135 `.RM2` resources and 134 `.SM2` resources. Matching the paths by directory and base name gives 134 pairs; `Startup\Default.rm2` is the unmatched `.RM2` entry. The MIT-licensed Twinsanity Editor describes an RM/SM pair as a complete level chunk, providing a useful lead for inspecting these resources.
+
+The editor's `TwinsFile.cs` describes a 12-byte file header followed by a count of 12-byte section records containing offset, size, and ID, then section payloads. Three local ISO samples agree: `Levels\Earth\Cavern\cavent.rm2` and `.sm2`, and `Startup\Default.rm2`, each begin with word `0x00010001`; their section counts are 12, 7, and 12. For all three, the header's content-size word equals file length minus the header and section table, and the section ranges are contiguous from the end of the table through EOF. Section ID meanings remain unverified.
+
+The read-only Nim utility [`rm2_inspect.nim`](../tools/rm2_inspect.nim) locates an RM2 or SM2 path in the on-ISO `.BH` catalog, reads its header and section table directly from the `.BD` extent, and reports bounded section ranges. It does not extract resource payloads.
+
 The local game executable contains strings including `.BH`, `.BD`, `%s.mb`, `Crash6\Crash`, `Crash6\Music`, `STREAM.IRX`, `CDVDSTM.IRX`, and `streaming options`.
 
 A direct MIPS reference scan finds `.BH` and `.BD` addresses materialized in adjacent calls to executable address `0x00203ED0` from the routine beginning at `0x002B46A8`. The helper reads the suffix length, updates a caller-provided buffer's length/capacity fields, and invokes copy helpers with the suffix; this supports identifying it as a string-building routine. The caller appends `.BH` to a buffer at its stack base and `.BD` to a second buffer 16 bytes later.
@@ -58,10 +64,12 @@ These call-site observations are consistent with the `.BH` index and `.BD` data 
 ## Next checks
 
 - Inspect the `MSVp` header and music type-1 payload structure further, keeping the observed range associations separate from field semantics.
+- Inspect section IDs 10 and 11 in paired RM2/SM2 files to identify which sections contain the renderable level geometry.
 - Trace how the paired-name object and registry result are consumed after lookup, and determine whether that path reaches file access.
 
 ## Community references and licensing
 
 - Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/BDArchive.cs`. The repository is MIT-licensed. Its archive reader/writer is used here as an attributed format cross-check only; no source code was copied or adapted. If MIT-licensed code is reused from this project later, retain the MIT copyright and permission notice for that code when distributing the ISC-licensed project.
+- Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/TwinsFile.cs`. Its RM/SM pair and section-table descriptions guided the next inspection target; the header and range findings above were checked independently against our ISO. No source code was copied or adapted.
 - Knuxfan24, [KnuxLib](https://github.com/Knuxfan24/KnuxLib). Its MIT-licensed format list independently records `.BD`/`.BH` as a Crash Twinsanity archive pair. It is a possible comparison source for later parser work; no code was used here.
 - Smartkin, [twinsanity-reversed](https://github.com/Smartkin/twinsanity-reversed), is a PAL executable decompilation project with relevant reverse-engineering material. Its repository currently lists no license file, so its code is not being incorporated into this ISC project.
