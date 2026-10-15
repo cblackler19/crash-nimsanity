@@ -153,11 +153,13 @@ In `cavent.sm2`, root section 5 contains two links: `levels\earth\cavern\tunnel0
 
 The experimental `--chunk-links` view follows one level of those links, loads model items from the linked SM2 resources, and applies each source link's `ObjectMatrix` as the target chunk transform candidate. It also reads every nonempty nested section-ID-6 instance group from each paired RM2 resource. Cavent's first sampled placement group has eight records; two objects reach 24 and 25 geometry candidates, respectively. Those links do not prove the candidates should all appear simultaneously at one transform, so the preview now draws only the first loadable candidate for each object. At depth 1, the data audit examined 308 distinct model/resource/material combinations and 194,115 expanded vertices; all positions were finite and all decoded triangle vertex counts were divisible by three. Individual local model bounds vary widely, with the largest extent about 241 units. This validates basic range/count integrity, not triangle semantics, object hierarchy, visibility, material selection, or the link transform direction.
 
+Live visual comparison narrows the current rendering issue but does not resolve it. At link depth 0, the Cavent preview shows a contained round purple form against the dark background; at depth 1, the full scene has large wedge-like surfaces across the viewport. Selecting either `ObjectMatrix` or `ChunkMatrix` for neighbor links still produces a distorted full-scene view. A single Cavent SM2 model rendered in isolation has a coherent silhouette, so at least that model's positions and decoded strip topology are plausible. These observations point to combined-scene geometry or per-model placement as the next area to isolate; neither matrix interpretation is verified.
+
 ## Next checks
 
 - Check whether `0xFFFF` is the empty OGI-reference sentinel across more resource chunks and identify any non-sentinel exceptions.
 - Verify the instance rotation fields and transform composition against recognizable objects in the retail game.
-- Compare the chunk-link matrices and transformed neighboring geometry against the retail game before treating the preview as a reconstructed scene.
+- Isolate linked models and placements to determine which geometry or hierarchy introduces the wedge-like surfaces, then compare their transforms against the retail game.
 - Decode per-model transforms and hierarchy for objects whose OGI links reach multiple geometry models; the current preview draws only the first loadable candidate.
 - Validate the combined static and placed scene against recognizable locations in the retail game, then refine coordinate conversion, visibility, and material assignment.
 - Compare candidate ordered material/submodel assignments across more models and establish whether the apparent correspondence holds outside the initial visual sample.
