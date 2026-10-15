@@ -44,6 +44,7 @@ Controls in the current renderer:
 
 - `W`, `A`, `S`, `D`: move horizontally.
 - `R`, `F`: move up and down.
+- `Q`, `E`: look left and right; `T`, `G`: look up and down.
 - `Esc`: close the window.
 
 ## ISO research tools
