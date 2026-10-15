@@ -57,6 +57,7 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
     raise newException(IOError, "MH file is shorter than its table header")
 
   let declaredCount = readU32LE(headerData, 0)
+  let headerChunkBytes = readU32LE(headerData, 4)
   if uint64(declaredCount) > uint64((headerData.len - TableHeaderSize) div RecordSize):
     raise newException(IOError, "MH record count exceeds the table data")
 
@@ -64,7 +65,7 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
   echo "ISO volume: ", image.volumeName
   echo "MH path: ", headerPath, " (", headerEntry.byteLength, " bytes)"
   echo "MB path: ", dataPath, " (", dataEntry.byteLength, " bytes)"
-  echo "Header words: ", declaredCount, ", ", readU32LE(headerData, 4)
+  echo "Header words: ", declaredCount, ", ", headerChunkBytes
   echo "Records described by first word: ", declaredCount
   echo "20-byte records available after header: ", actualCount
   if actualCount * RecordSize + TableHeaderSize != headerData.len:
@@ -75,6 +76,8 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
   var inBoundsCount = 0
   var alignedTypeOneCount = 0
   var alignedTypeOneOffsetCount = 0
+  var typeOnePairedTrackRanges = 0
+  var typeOneValidEndOffsets = 0
   var typeOneCount = 0
   var typeZeroCount = 0
   var typeZeroRanges = initTable[string, int]()
@@ -116,6 +119,11 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
       inc typeOneCount
       let word3 = readU32LE(headerData, base + 12)
       let word4 = readU32LE(headerData, base + 16)
+      if headerChunkBytes > 0 and
+          uint64(byteLength) mod (uint64(headerChunkBytes) * 2) == 0:
+        inc typeOnePairedTrackRanges
+      if word4 > 0 and word4 <= headerChunkBytes and word4 mod 16 == 0:
+        inc typeOneValidEndOffsets
       typeOneWord3Counts.mgetOrPut(word3, 0).inc
       typeOneWord4Counts.mgetOrPut(word4, 0).inc
       if word4 mod 16 == 0:
@@ -225,6 +233,10 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
     " / ", typeOneCount
   echo "Type-1 offsets divisible by 16: ", alignedTypeOneOffsetCount,
     " / ", typeOneCount
+  echo "Type-1 ranges containing whole pairs of header-sized track chunks: ",
+    typeOnePairedTrackRanges, " / ", typeOneCount
+  echo "Type-1 end offsets within a track chunk and aligned to 16 bytes: ",
+    typeOneValidEndOffsets, " / ", typeOneCount
   echo "Type-1 raw word3 value frequencies (possible sample-rate field):"
   for value, count in typeOneWord3Counts:
     echo "  ", value, ": ", count
