@@ -79,7 +79,7 @@ The repository includes these utilities:
 | `bh_inspect` | Parse a `.BH` archive index and optionally check its ranges against the paired `.BD`. |
 | `mh_inspect` | Compare `.MH` records with candidate ranges in the paired `.MB`, including type-1 track-pair and end-offset checks. |
 | `mh_audio_export` | Decode candidate two-track interleaved type-1 `MUSIC.MH` ranges, writing WAV directly from ISO data. |
-| `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, decode PSMT8 textures and mip levels, check model-item VIF decoding coverage and linked material/submodel count agreement, inspect material/rigid-model records, and scan VIF blocks. |
+| `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, decode PSMT8 textures and mip levels, check model-item VIF decoding coverage and linked material/submodel count agreement, inspect material/rigid-model and placed-object records, and dump bounded hexadecimal ranges. |
 | `texture_inspect` | Load one PSMT8 texture and its mip levels through an ISO's `.BH`/`.BD` archive without extracting the resource. |
 | `model_inspect` | Decode one model's bounded VIF position, UV/color, and strip records, report per-submodel vertex/triangle counts, and list all resolving material/texture pairs. |
 | `elf_mips_refs` | Find direct MIPS immediate references to strings in a supplied ELF executable. |
@@ -140,6 +140,14 @@ tools/rm2_inspect /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2"
 
 The optional numeric arguments to `rm2_inspect` select section-table positions: `0` selects the outer graphics section in this sample, and `2` selects its model section. The tool prints the section IDs alongside those positions. Consult each tool's usage message for its other modes.
 
+To inspect an RM2 instance group's object placements, select an outer instance-group section and its nested object-instance section. For the Cavern resource, outer index `4` has section ID `0`, and nested index `6` has section ID `6`:
+
+```sh
+tools/rm2_inspect /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2" 4 6
+```
+
+The inspector reports bounded position and rotation fields, linked IDs, and whether each placed object's ID appears in the sibling Code/Object table. It also checks the object's listed graphics-info IDs against the Code/OGI table; those links are not yet fully understood. Rotation values are shown as raw 16-bit fields, not converted to angles or matrices. The tool can dump ranges directly from either a selected outer section or nested section with `--hex`.
+
 `elf_mips_refs` currently accepts a standalone ELF file path rather than an ISO path:
 
 ```sh
@@ -154,7 +162,7 @@ Game images, executables, and extracted assets are not part of this repository. 
 
 ## Credits and research references
 
-- [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), by Smartkin, Artem Yashin (NeoKesha), and BetaM, is MIT licensed. Its archive, section, model, rigid-model, and VIF/DMA readers informed format cross-checks; its PSMT8 mapping and model attribute/strip interpretation were adapted for the Nim implementation. The local ISO samples were parsed independently. Required MIT notices are retained in [third-party notices](docs/THIRD_PARTY_LICENSES.md).
+- [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), by Smartkin, Artem Yashin (NeoKesha), and BetaM, is MIT licensed. Its archive, section, object-instance, GameObject, graphics-info, model, rigid-model, and VIF/DMA readers informed format cross-checks; its PSMT8 mapping and model attribute/strip interpretation were adapted for the Nim implementation. The local ISO samples were parsed independently. Required MIT notices are retained in [third-party notices](docs/THIRD_PARTY_LICENSES.md).
 - [KnuxLib](https://github.com/Knuxfan24/KnuxLib), by Knuxfan24, is MIT licensed and independently recognizes the `.BH`/`.BD` archive pairing. It was used as a format reference; no code was copied.
 - [vgmstream](https://github.com/vgmstream/vgmstream), by its contributors and licensed under ISC, provided a reference interpretation for the `MSVp` music headers; no code was copied.
 - [FFmpeg](https://github.com/FFmpeg/FFmpeg) provided references for the PSX ADPCM block-header scan and diagnostic decoder; no code was copied.
