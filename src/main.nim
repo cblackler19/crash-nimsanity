@@ -19,6 +19,7 @@ import nimgl/[glfw, opengl]
 
 import camera
 import iso_model
+import iso_scene
 import iso_texture
 import math3d
 import mesh
@@ -75,6 +76,8 @@ type PreviewAssets = object
   texture: DecodedTexture
   candidateTextures: seq[DecodedTexture]
   model: DecodedModel
+  showPlacements: bool
+  scene: ScenePreview
 
 proc parseId(argument, label: string): uint32 =
   try:
@@ -85,8 +88,34 @@ proc parseId(argument, label: string): uint32 =
   except ValueError:
     quit(label & " must be an unsigned integer", 1)
 
+proc parseIndex(argument, label: string): int =
+  try:
+    result = parseInt(argument)
+    if result < 0:
+      quit(label & " must be zero or greater", 1)
+  except ValueError:
+    quit(label & " must be an integer", 1)
+
 proc loadPreviewAssets(): PreviewAssets =
   if paramCount() == 0:
+    return
+  if paramStr(1) == "--placements":
+    if paramCount() notin [5, 6]:
+      quit("Usage: main --placements image.iso resource-path " &
+        "outer-section-index nested-section-index [record-limit]", 1)
+    let maxRecords = if paramCount() == 6:
+      parseIndex(paramStr(6), "Record limit") else: 32
+    try:
+      result.scene = loadPlacementModelsFromIso(paramStr(2), paramStr(3),
+        parseIndex(paramStr(4), "Outer section index"),
+        parseIndex(paramStr(5), "Nested section index"), maxRecords)
+      result.showPlacements = true
+      echo "Loaded ", result.scene.placements.len,
+        " placements with ", result.scene.models.len, " distinct models"
+      echo "Experimental rotations: primary 16-bit fields map one full turn; " &
+        "COM rotation fields are ignored"
+    except CatchableError as error:
+      quit("Could not load ISO placement preview: " & error.msg, 1)
     return
   if paramCount() == 3:
     let textureId = parseId(paramStr(3), "Texture ID")
@@ -103,7 +132,8 @@ proc loadPreviewAssets(): PreviewAssets =
       paramStr(1) != "--model":
     quit("Usage: main [image.iso resource-path texture-id] | " &
       "main --model image.iso resource-path model-id [texture-id | " &
-      "--candidate-material-order]", 1)
+      "--candidate-material-order] | main --placements image.iso " &
+      "resource-path outer-index nested-index [record-limit]", 1)
 
   let modelId = parseId(paramStr(4), "Model ID")
   try:
@@ -181,6 +211,35 @@ proc makeModelVertices(model: DecodedModel): seq[Vertex] =
       texCoord: source.uv
     ))
 
+proc makeSceneVertices(model: DecodedModel): seq[Vertex] =
+  result = newSeqOfCap[Vertex](model.vertices.len)
+  for source in model.vertices:
+    result.add(Vertex(
+      position: source.position,
+      color: [
+        float32(source.color[0]) / 255.0'f32,
+        float32(source.color[1]) / 255.0'f32,
+        float32(source.color[2]) / 255.0'f32
+      ],
+      texCoord: source.uv
+    ))
+
+proc previewAngle(raw: uint16): float32 =
+  float32(raw) * (2.0'f32 * PI.float32 / 65536.0'f32)
+
+proc placementMatrix(placement: ScenePlacement,
+    scene: ScenePreview): Mat4 =
+  let rotateX = rotationMatrixX(previewAngle(placement.rotations[0]))
+  let rotateY = rotationMatrixY(previewAngle(placement.rotations[2]))
+  let rotateZ = rotationMatrixZ(previewAngle(placement.rotations[4]))
+  let rotation = multiply(rotateZ, multiply(rotateY, rotateX))
+  let position = translationMatrix(
+    placement.position[0] - scene.center[0],
+    placement.position[1] - scene.center[1],
+    placement.position[2] - scene.center[2]
+  )
+  multiply(position, rotation)
+
 proc compileShader(kind: GLenum, source: string): GLuint =
   result = glCreateShader(kind)
 
@@ -211,7 +270,9 @@ proc main() =
   glfwWindowHint(GLFWOpenglProfile, GLFW_OPENGL_CORE_PROFILE)
   glfwWindowHint(GLFWOpenglForwardCompat, GLFW_TRUE)
 
-  let windowTitle = if preview.showModel and preview.useCandidateMaterialOrder:
+  let windowTitle = if preview.showPlacements:
+    "crash-nimsanity - experimental placement preview"
+  elif preview.showModel and preview.useCandidateMaterialOrder:
     "crash-nimsanity - candidate material preview"
   elif preview.showModel:
     "crash-nimsanity - ISO model preview"
@@ -258,7 +319,13 @@ proc main() =
   let textureLocation = glGetUniformLocation(shaderProgram, "uTexture")
   let useTextureLocation = glGetUniformLocation(shaderProgram, "uUseTexture")
   var previewMesh: Mesh
-  if preview.showModel:
+  var sceneMeshes: seq[Mesh]
+  var sceneTextures: seq[Texture2D]
+  if preview.showPlacements:
+    for sceneModel in preview.scene.models:
+      sceneMeshes.add(uploadMesh(makeSceneVertices(sceneModel.model)))
+      sceneTextures.add(uploadTexture2D(sceneModel.texture))
+  elif preview.showModel:
     previewMesh = uploadMesh(makeModelVertices(preview.model))
   elif preview.showTexture:
     previewMesh = createTexturedQuadMesh()
@@ -272,6 +339,18 @@ proc main() =
   elif preview.showTexture:
     previewTexture = uploadTexture2D(preview.texture)
   var camera = initCamera()
+  var projectionFar = 100.0'f32
+  if preview.showPlacements:
+    let spanX = preview.scene.maximum[0] - preview.scene.minimum[0]
+    let spanY = preview.scene.maximum[1] - preview.scene.minimum[1]
+    let spanZ = preview.scene.maximum[2] - preview.scene.minimum[2]
+    let aspect = 800.0'f32 / 600.0'f32
+    let halfHeight = max(spanY, spanX / aspect) * 0.5'f32
+    let fitDistance = max(halfHeight / tan(22.5'f32 * PI.float32 / 180.0'f32),
+      8.0'f32)
+    camera.position = Vec3(x: 0.0'f32, y: 0.0'f32,
+      z: spanZ * 0.5'f32 + fitDistance + 2.0'f32)
+    projectionFar = max(100.0'f32, camera.position.z * 4.0'f32 + spanZ)
 
   glEnable(GL_DEPTH_TEST)
   glfwSwapInterval(1)
@@ -320,13 +399,24 @@ proc main() =
       multiply(rotationMatrixY(time * 0.7'f32), rotationMatrixX(time * 0.5'f32))
     let view = camera.viewMatrix()
     let aspect = if width > 0 and height > 0: float32(width) / float32(height) else: 1.0'f32
-    let projection = perspectiveMatrix(45.0'f32 * PI.float32 / 180.0'f32, aspect, 0.1'f32, 100.0'f32)
+    let projection = perspectiveMatrix(45.0'f32 * PI.float32 / 180.0'f32,
+      aspect, 0.1'f32, projectionFar)
 
-    glUniformMatrix4fv(modelLocation, 1, GLboolean(0), model[0].addr)
     glUniformMatrix4fv(viewLocation, 1, GLboolean(0), view[0].addr)
     glUniformMatrix4fv(projectionLocation, 1, GLboolean(0), projection[0].addr)
-    glUniform1i(useTextureLocation, GLint(if preview.showTexture: 1 else: 0))
-    if preview.showTexture:
+    let useTexture = preview.showTexture or preview.showPlacements
+    glUniform1i(useTextureLocation, GLint(if useTexture: 1 else: 0))
+    if useTexture:
+      glUniform1i(textureLocation, 0)
+    if preview.showPlacements:
+      for placement in preview.scene.placements:
+        let transform = placementMatrix(placement, preview.scene)
+        glUniformMatrix4fv(modelLocation, 1, GLboolean(0), transform[0].addr)
+        sceneTextures[placement.modelIndex].bindTexture()
+        sceneMeshes[placement.modelIndex].draw()
+    else:
+      glUniformMatrix4fv(modelLocation, 1, GLboolean(0), model[0].addr)
+    if not preview.showPlacements and preview.showTexture:
       glUniform1i(textureLocation, 0)
       if preview.useCandidateMaterialOrder:
         for submodelIndex, texture in candidateTextures:
@@ -338,14 +428,19 @@ proc main() =
       else:
         previewTexture.bindTexture()
         previewMesh.draw()
-    else:
+    elif not preview.showPlacements:
       previewMesh.draw()
 
     window.swapBuffers()
 
-  previewMesh.destroy()
+  if not preview.showPlacements:
+    previewMesh.destroy()
   previewTexture.destroy()
   for texture in candidateTextures.mitems:
+    texture.destroy()
+  for mesh in sceneMeshes.mitems:
+    mesh.destroy()
+  for texture in sceneTextures.mitems:
     texture.destroy()
   glDeleteProgram(shaderProgram)
   window.destroyWindow()
