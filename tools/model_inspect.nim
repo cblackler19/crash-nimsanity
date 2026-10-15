@@ -51,6 +51,18 @@ proc main() =
       echo "Resolved material/texture links: ", links.len
       for link in links:
         echo "  material ", link.materialId, " -> texture ", link.textureId
+      if links.len == model.submodelCount:
+        echo "Experimental index-order candidates (not confirmed):"
+        for submodelIndex, link in links:
+          let firstVertex =
+            model.submodelTriangleVertexOffsets[submodelIndex]
+          let vertexCount = model.submodelTriangleCounts[submodelIndex] * 3
+          echo "  submodel ", submodelIndex, " vertices ", firstVertex,
+            "..<", firstVertex + vertexCount, " -> material ",
+            link.materialId, " -> texture ", link.textureId
+      else:
+        echo "No one-link-per-submodel candidate: ", links.len,
+          " links for ", model.submodelCount, " submodels"
     except CatchableError as error:
       echo "Linked texture unavailable: ", error.msg
     if model.vertices.len > 0:
