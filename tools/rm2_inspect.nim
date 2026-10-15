@@ -17,6 +17,7 @@
 import std/[math, os, sets, strutils]
 
 import iso9660
+import ps2_texture
 
 type
   ArchiveEntry = object
@@ -813,6 +814,9 @@ proc inspectTextureItems(sectionData: openArray[uint8], sectionLength: uint32) =
   var validDimensions = 0'u64
   var pixelPayloadMatches = 0'u64
   var transferPayloadMatches = 0'u64
+  var decodedTextureCount = 0'u64
+  var decodedPixelCount = 0'u64
+  var decodedColors = initHashSet[uint32]()
   var totalImageBytes = 0'u64
   var dimensionSamples: seq[string]
 
@@ -859,6 +863,17 @@ proc inspectTextureItems(sectionData: openArray[uint8], sectionLength: uint32) =
     if pixelFormat < formatCounts.len:
       inc formatCounts[pixelFormat]
     totalImageBytes += imageBytes
+    if pixelFormat == 19:
+      let decoded = decodePsmT8(sectionData[itemStart ..< int(itemEnd)])
+      inc decodedTextureCount
+      decodedPixelCount += uint64(decoded.width) * uint64(decoded.height)
+      for pixel in 0 ..< decoded.width * decoded.height:
+        let colorOffset = pixel * 4
+        let packedColor = uint32(decoded.rgba[colorOffset]) or
+          (uint32(decoded.rgba[colorOffset + 1]) shl 8) or
+          (uint32(decoded.rgba[colorOffset + 2]) shl 16) or
+          (uint32(decoded.rgba[colorOffset + 3]) shl 24)
+        decodedColors.incl(packedColor)
     if itemIndex < 8:
       echo "Texture item id=", itemId, " bytes=", itemLength,
         " size=", textureSize, " dimensions=2^", widthExponent, "x2^",
@@ -875,6 +890,9 @@ proc inspectTextureItems(sectionData: openArray[uint8], sectionLength: uint32) =
   echo "PSMCT32 payloads matching width * height * 4: ", pixelPayloadMatches
   echo "PSMCT32/PSMT8 payloads matching 32-bit transfer rectangle: ",
     transferPayloadMatches, " / ", itemCount
+  echo "PSMT8 textures decoded in memory: ", decodedTextureCount
+  echo "Decoded base-image pixels: ", decodedPixelCount
+  echo "Distinct decoded RGBA colors across sample: ", decodedColors.len
   echo "Image payload bytes: ", totalImageBytes
   echo "Pixel format counts:"
   for format, count in formatCounts:
@@ -1084,6 +1102,8 @@ proc main() =
     inspectIsoResource(paramStr(1), paramStr(2), nestedIndex, modelIndex)
   except IOError as error:
     quit(error.msg, 1)
+  except ValueError as error:
+    quit("Could not decode resource: " & error.msg, 1)
 
 when isMainModule:
   main()
