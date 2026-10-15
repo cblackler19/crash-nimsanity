@@ -46,6 +46,7 @@ type
     positionMin: array[3, float32]
     positionMax: array[3, float32]
     positionSamples: seq[array[3, float32]]
+    positionVectors: seq[array[3, float32]]
     uvCount: uint64
     invalidUvCount: uint64
     uvMin: array[2, float32]
@@ -147,6 +148,7 @@ proc scanVifCommands(data: openArray[uint8], start,
                   result.positionMax[component], position[component]
                 )
             inc result.positionVectorCount
+            result.positionVectors.add(position)
             if result.positionSamples.len < 3:
               result.positionSamples.add(position)
           else:
@@ -400,6 +402,9 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
   var streamsWithUv = 0'u64
   var streamsWithTrianglePrefix = 0'u64
   var candidateTriangleMarkers = 0'u64
+  var topologyStreamsWithAlignedVertices = 0'u64
+  var candidateTrianglesWithArea = 0'u64
+  var nearDegenerateCandidateTriangles = 0'u64
   var firstConnectionFlags: seq[bool]
   var normalCount = 0'u64
   var invalidNormalCount = 0'u64
@@ -514,9 +519,31 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
               if not scan.connectionFlags[0] and
                   not scan.connectionFlags[1] and scan.connectionFlags[2]:
                 inc streamsWithTrianglePrefix
-              for flagIndex in 2 ..< scan.connectionFlags.len:
-                if scan.connectionFlags[flagIndex]:
+              if scan.connectionFlags.len == scan.positionVectors.len:
+                inc topologyStreamsWithAlignedVertices
+              let vertexCount = min(scan.connectionFlags.len,
+                scan.positionVectors.len)
+              for endIndex in 2 ..< vertexCount:
+                if scan.connectionFlags[endIndex]:
                   inc candidateTriangleMarkers
+                  let a = scan.positionVectors[endIndex - 2]
+                  let b = scan.positionVectors[endIndex - 1]
+                  let c = scan.positionVectors[endIndex]
+                  let abx = float64(b[0]) - float64(a[0])
+                  let aby = float64(b[1]) - float64(a[1])
+                  let abz = float64(b[2]) - float64(a[2])
+                  let acx = float64(c[0]) - float64(a[0])
+                  let acy = float64(c[1]) - float64(a[1])
+                  let acz = float64(c[2]) - float64(a[2])
+                  let crossX = aby * acz - abz * acy
+                  let crossY = abz * acx - abx * acz
+                  let crossZ = abx * acy - aby * acx
+                  let doubledAreaSquared = crossX * crossX +
+                    crossY * crossY + crossZ * crossZ
+                  if doubledAreaSquared <= 1.0e-12:
+                    inc nearDegenerateCandidateTriangles
+                  else:
+                    inc candidateTrianglesWithArea
           invalidUvCount += scan.invalidUvCount
           if scan.normalCount > 0:
             if normalCount == 0:
@@ -657,6 +684,11 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
       candidateTriangleMarkers
     echo "  streams beginning false,false,true: ", streamsWithTrianglePrefix,
       " / ", streamsWithUv
+    echo "  streams with aligned position/connectivity vectors: ",
+      topologyStreamsWithAlignedVertices, " / ", streamsWithUv
+    echo "  candidate triangles with nonzero area: ",
+      candidateTrianglesWithArea, "; near-degenerate: ",
+      nearDegenerateCandidateTriangles
     echo "  first connectivity flags: ", firstConnectionFlags
     for sample in uvSamples:
       echo "  sample: UV=", sample.u, ",", sample.v,
