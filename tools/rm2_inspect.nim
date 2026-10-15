@@ -1269,6 +1269,7 @@ proc inspectObjectInstances(sectionData: openArray[uint8],
   var resolvedObjectIds = 0'u64
   var totalGraphicsInfoLinks = 0'u64
   var resolvedGraphicsInfoLinks = 0'u64
+  var unresolvedGraphicsInfoIds = initTable[uint16, uint32]()
   var totalModelLinks = 0'u64
   var resolvedRigidModelLinks = 0'u64
   var resolvedMeshLinks = 0'u64
@@ -1318,6 +1319,8 @@ proc inspectObjectInstances(sectionData: openArray[uint8],
         inc resolvedGraphicsInfoLinks
       else:
         allGraphicsInfoLinksResolve = false
+        unresolvedGraphicsInfoIds[graphicsInfoId] =
+          unresolvedGraphicsInfoIds.getOrDefault(graphicsInfoId) + 1
     var placedModelIds = initHashSet[uint32]()
     for graphicsInfoId in linkedGraphicsInfoIds:
       if uint32(graphicsInfoId) in graphicsInfoModelIds:
@@ -1382,6 +1385,8 @@ proc inspectObjectInstances(sectionData: openArray[uint8],
     echo "Sibling Code/Object table was unavailable for this resource."
   echo "Object graphics-info links resolving in sibling Code/OGI table: ",
     resolvedGraphicsInfoLinks, " / ", totalGraphicsInfoLinks
+  echo "Distinct unresolved OGI IDs and reference counts: ",
+    unresolvedGraphicsInfoIds
   echo "Distinct candidate rigid-model IDs referenced by these placements: ",
     distinctPlacedModelIds.len
   echo "First candidate rigid-model IDs: ", candidateModelSamples
