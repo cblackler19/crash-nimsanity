@@ -116,6 +116,80 @@ proc inspectResource(resourceData: openArray[uint8], resourceLength: uint32): se
   if rangesAreContiguous and expectedOffset == uint64(resourceLength):
     echo "Section ranges are contiguous and cover the resource payload."
 
+proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
+  if sectionData.len < 12:
+    raise newException(IOError, "Model section is shorter than its header")
+
+  let sectionCount = readU32LE(sectionData, 4)
+  let tableLength = 12'u64 + uint64(sectionCount) * 12'u64
+  if tableLength > uint64(sectionData.len) or tableLength > uint64(sectionLength):
+    raise newException(IOError, "Model item table extends beyond its section")
+
+  var totalSubmodels = 0'u64
+  var totalVertices = 0'u64
+  var totalVifBytes = 0'u64
+  var totalBlobBytes = 0'u64
+  var recordsWithTrailingBytes = 0'u64
+
+  for itemIndex in 0 ..< int(sectionCount):
+    let entryOffset = 12 + itemIndex * 12
+    let itemOffset = readU32LE(sectionData, entryOffset)
+    let itemLength = readU32LE(sectionData, entryOffset + 4)
+    let itemId = readU32LE(sectionData, entryOffset + 8)
+    let itemEnd = uint64(itemOffset) + uint64(itemLength)
+    if itemOffset < tableLength or itemEnd > uint64(sectionLength) or
+        itemEnd > uint64(sectionData.len):
+      raise newException(IOError, "Model item range extends beyond its section")
+    if itemLength < 4:
+      raise newException(IOError, "Model item is shorter than its count field")
+
+    let itemStart = int(itemOffset)
+    let itemLimit = itemStart + int(itemLength)
+    let submodelCount = readU32LE(sectionData, itemStart)
+    var cursor = itemStart + 4
+    var itemVertices = 0'u64
+    var itemVifBytes = 0'u64
+    var itemBlobBytes = 0'u64
+    if uint64(submodelCount) > uint64((itemLimit - cursor) div 12):
+      raise newException(IOError, "Model submodel count exceeds item bounds")
+
+    for _ in 0 ..< int(submodelCount):
+      let vertexCount = readU32LE(sectionData, cursor)
+      let vifLength = readU32LE(sectionData, cursor + 4)
+      cursor += 8
+      if uint64(vifLength) > uint64(itemLimit - cursor - 4):
+        raise newException(IOError, "VIF payload extends beyond model item")
+      cursor += int(vifLength)
+      let blobLength = readU32LE(sectionData, cursor)
+      cursor += 4
+      if uint64(blobLength) > uint64(itemLimit - cursor):
+        raise newException(IOError, "Model blob extends beyond model item")
+      cursor += int(blobLength)
+
+      itemVertices += uint64(vertexCount)
+      itemVifBytes += uint64(vifLength)
+      itemBlobBytes += uint64(blobLength)
+
+    if cursor != itemLimit:
+      inc recordsWithTrailingBytes
+    totalSubmodels += uint64(submodelCount)
+    totalVertices += itemVertices
+    totalVifBytes += itemVifBytes
+    totalBlobBytes += itemBlobBytes
+
+    if itemIndex < 8:
+      echo "Model item id=", itemId, " bytes=", itemLength,
+        " submodels=", submodelCount, " vertices=", itemVertices,
+        " VIF bytes=", itemVifBytes, " blob bytes=", itemBlobBytes,
+        " trailing bytes=", itemLimit - cursor
+
+  echo "Model items: ", sectionCount
+  echo "Total submodels: ", totalSubmodels
+  echo "Declared vertices: ", totalVertices
+  echo "VIF bytes: ", totalVifBytes
+  echo "Blob bytes: ", totalBlobBytes
+  echo "Records with trailing bytes: ", recordsWithTrailingBytes
+
 proc readSectionTable(image: IsoImage, dataFile: IsoEntry, offset: int64,
     sectionLength: uint32): seq[uint8] =
   let fixedLength = int(min(sectionLength, 12'u32))
@@ -130,7 +204,8 @@ proc readSectionTable(image: IsoImage, dataFile: IsoEntry, offset: int64,
 
   image.readSlice(dataFile, offset, int(tableLength))
 
-proc inspectIsoResource(imagePath, requestedPath: string, nestedIndex: int) =
+proc inspectIsoResource(imagePath, requestedPath: string, nestedIndex,
+    modelIndex: int) =
   let image = openIso(imagePath)
   defer: image.close()
 
@@ -162,21 +237,38 @@ proc inspectIsoResource(imagePath, requestedPath: string, nestedIndex: int) =
     )
     echo "Nested table for outer section index ", nestedIndex,
       " (id=", section.id, ", bytes=", section.byteLength, ")"
-    discard inspectResource(nestedHeader, section.byteLength)
+    let nestedSections = inspectResource(nestedHeader, section.byteLength)
+
+    if modelIndex >= 0:
+      if modelIndex >= nestedSections.len:
+        raise newException(IOError, "Nested section index is out of range")
+      let modelSection = nestedSections[modelIndex]
+      let modelOffset = sectionOffset + int64(modelSection.offset)
+      let modelData = image.readSlice(dataFile, modelOffset,
+        int(modelSection.byteLength))
+      echo "Model table for nested section index ", modelIndex,
+        " (id=", modelSection.id, ", bytes=", modelSection.byteLength, ")"
+      inspectModelItems(modelData, modelSection.byteLength)
 
 proc main() =
-  if paramCount() notin [2, 3]:
-    quit("Usage: rm2_inspect <image.iso> <path-inside-CRASH.BD> [outer-section-index]", 1)
+  if paramCount() notin [2, 3, 4]:
+    quit("Usage: rm2_inspect <image.iso> <path-inside-CRASH.BD> [outer-section-index [nested-section-index]]", 1)
 
   var nestedIndex = -1
-  if paramCount() == 3:
+  var modelIndex = -1
+  if paramCount() >= 3:
     try:
       nestedIndex = parseInt(paramStr(3))
     except ValueError:
       quit("Outer section index must be an integer", 1)
+  if paramCount() == 4:
+    try:
+      modelIndex = parseInt(paramStr(4))
+    except ValueError:
+      quit("Nested section index must be an integer", 1)
 
   try:
-    inspectIsoResource(paramStr(1), paramStr(2), nestedIndex)
+    inspectIsoResource(paramStr(1), paramStr(2), nestedIndex, modelIndex)
   except IOError as error:
     quit(error.msg, 1)
 
