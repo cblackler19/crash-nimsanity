@@ -14,7 +14,7 @@
 # OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 # PERFORMANCE OF THIS SOFTWARE.
 #
-import std/[os, sets, strutils]
+import std/[math, os, sets, strutils]
 
 import iso9660
 
@@ -54,6 +54,15 @@ type
     disconnectedVertices: uint64
     uvSamples: seq[UvSample]
     connectionFlags: seq[bool]
+    normalCount: uint64
+    invalidNormalCount: uint64
+    normalMin: array[3, float32]
+    normalMax: array[3, float32]
+    minNormalLength: float32
+    maxNormalLength: float32
+    emissiveColorCount: uint64
+    emissiveColorMin: array[4, uint8]
+    emissiveColorMax: array[4, uint8]
 
 proc readU32LE(data: openArray[uint8], offset: int): uint32 =
   if offset < 0 or offset > data.len - 4:
@@ -184,6 +193,61 @@ proc scanVifCommands(data: openArray[uint8], start,
                 uint8(zWord and 0xFF), uint8((wWord shl 1) and 0xFF)],
               connected: connected
             ))
+      elif address == 5 and (opcode and 0x1F) == 0x08:
+        let payloadStart = cursor + 4
+        for vectorIndex in 0 ..< suppliedVectors:
+          var normal: array[3, float32]
+          var normalIsFinite = true
+          for component in 0 .. 2:
+            let bits = readU32LE(data,
+              payloadStart + vectorIndex * 12 + component * 4)
+            normal[component] = cast[float32](bits)
+            if normal[component] != normal[component] or
+                abs(normal[component]) >= 1.0e20'f32:
+              normalIsFinite = false
+
+          if normalIsFinite:
+            let normalLength = float32(sqrt(
+              float64(normal[0]) * float64(normal[0]) +
+                float64(normal[1]) * float64(normal[1]) +
+                float64(normal[2]) * float64(normal[2])
+            ))
+            if result.normalCount == 0:
+              result.normalMin = normal
+              result.normalMax = normal
+              result.minNormalLength = normalLength
+              result.maxNormalLength = normalLength
+            else:
+              for component in 0 .. 2:
+                result.normalMin[component] = min(
+                  result.normalMin[component], normal[component]
+                )
+                result.normalMax[component] = max(
+                  result.normalMax[component], normal[component]
+                )
+              result.minNormalLength = min(result.minNormalLength, normalLength)
+              result.maxNormalLength = max(result.maxNormalLength, normalLength)
+            inc result.normalCount
+          else:
+            inc result.invalidNormalCount
+      elif address == 6 and (opcode and 0x1F) == 0x0E:
+        let payloadStart = cursor + 4
+        for vectorIndex in 0 ..< suppliedVectors:
+          if result.emissiveColorCount == 0:
+            for channel in 0 .. 3:
+              let value = data[payloadStart + vectorIndex * 4 + channel]
+              result.emissiveColorMin[channel] = value
+              result.emissiveColorMax[channel] = value
+          else:
+            for channel in 0 .. 3:
+              let value = data[payloadStart + vectorIndex * 4 + channel]
+              result.emissiveColorMin[channel] = min(
+                result.emissiveColorMin[channel], value
+              )
+              result.emissiveColorMax[channel] = max(
+                result.emissiveColorMax[channel], value
+              )
+          inc result.emissiveColorCount
     else:
       case opcode
       of 0x01: # STCYCL
@@ -337,6 +401,12 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
   var streamsWithTrianglePrefix = 0'u64
   var candidateTriangleMarkers = 0'u64
   var firstConnectionFlags: seq[bool]
+  var normalCount = 0'u64
+  var invalidNormalCount = 0'u64
+  var normalMin, normalMax: array[3, float32]
+  var minNormalLength, maxNormalLength: float32
+  var emissiveColorCount = 0'u64
+  var emissiveColorMin, emissiveColorMax: array[4, uint8]
 
   for itemIndex in 0 ..< int(sectionCount):
     let entryOffset = 12 + itemIndex * 12
@@ -448,6 +518,33 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
                 if scan.connectionFlags[flagIndex]:
                   inc candidateTriangleMarkers
           invalidUvCount += scan.invalidUvCount
+          if scan.normalCount > 0:
+            if normalCount == 0:
+              normalMin = scan.normalMin
+              normalMax = scan.normalMax
+              minNormalLength = scan.minNormalLength
+              maxNormalLength = scan.maxNormalLength
+            else:
+              for component in 0 .. 2:
+                normalMin[component] = min(normalMin[component],
+                  scan.normalMin[component])
+                normalMax[component] = max(normalMax[component],
+                  scan.normalMax[component])
+              minNormalLength = min(minNormalLength, scan.minNormalLength)
+              maxNormalLength = max(maxNormalLength, scan.maxNormalLength)
+            normalCount += scan.normalCount
+          invalidNormalCount += scan.invalidNormalCount
+          if scan.emissiveColorCount > 0:
+            if emissiveColorCount == 0:
+              emissiveColorMin = scan.emissiveColorMin
+              emissiveColorMax = scan.emissiveColorMax
+            else:
+              for channel in 0 .. 3:
+                emissiveColorMin[channel] = min(emissiveColorMin[channel],
+                  scan.emissiveColorMin[channel])
+                emissiveColorMax[channel] = max(emissiveColorMax[channel],
+                  scan.emissiveColorMax[channel])
+            emissiveColorCount += scan.emissiveColorCount
           if scan.unsupported:
             inc vifUnsupported
           if scan.malformed:
@@ -564,6 +661,16 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
     for sample in uvSamples:
       echo "  sample: UV=", sample.u, ",", sample.v,
         " RGBA=", sample.color, " connected=", sample.connected
+  echo "Address 5 V3_32 normals: ", normalCount, " finite, ",
+    invalidNormalCount, " non-finite"
+  if normalCount > 0:
+    echo "  component bounds: x=", normalMin[0], "..", normalMax[0],
+      " y=", normalMin[1], "..", normalMax[1],
+      " z=", normalMin[2], "..", normalMax[2]
+    echo "  vector length: ", minNormalLength, "..", maxNormalLength
+  echo "Address 6 V4_8 emissive bytes: ", emissiveColorCount
+  if emissiveColorCount > 0:
+    echo "  RGBA channel bounds: ", emissiveColorMin, "..", emissiveColorMax
 
 proc collectSectionItemIds(sectionData: openArray[uint8],
     sectionLength: uint32): HashSet[uint32] =
