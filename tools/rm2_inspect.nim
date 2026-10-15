@@ -14,7 +14,7 @@
 # OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 # PERFORMANCE OF THIS SOFTWARE.
 #
-import std/[os, strutils]
+import std/[os, sets, strutils]
 
 import iso9660
 
@@ -190,6 +190,65 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
   echo "Blob bytes: ", totalBlobBytes
   echo "Records with trailing bytes: ", recordsWithTrailingBytes
 
+proc inspectRigidModels(sectionData: openArray[uint8], sectionLength: uint32) =
+  if sectionData.len < 12:
+    raise newException(IOError, "Rigid-model section is shorter than its header")
+
+  let sectionCount = readU32LE(sectionData, 4)
+  let tableLength = 12'u64 + uint64(sectionCount) * 12'u64
+  if tableLength > uint64(sectionData.len) or tableLength > uint64(sectionLength):
+    raise newException(IOError, "Rigid-model item table extends beyond its section")
+
+  var totalMaterialLinks = 0'u64
+  var uniqueMeshIds = initHashSet[uint32]()
+  var recordsWithTrailingBytes = 0'u64
+  var headerValues = initHashSet[uint32]()
+
+  for itemIndex in 0 ..< int(sectionCount):
+    let entryOffset = 12 + itemIndex * 12
+    let itemOffset = readU32LE(sectionData, entryOffset)
+    let itemLength = readU32LE(sectionData, entryOffset + 4)
+    let itemId = readU32LE(sectionData, entryOffset + 8)
+    let itemEnd = uint64(itemOffset) + uint64(itemLength)
+    if itemOffset < tableLength or itemEnd > uint64(sectionLength) or
+        itemEnd > uint64(sectionData.len):
+      raise newException(IOError, "Rigid-model item range extends beyond its section")
+    if itemLength < 12:
+      raise newException(IOError, "Rigid-model item is shorter than its fixed fields")
+
+    let itemStart = int(itemOffset)
+    let itemLimit = itemStart + int(itemLength)
+    let header = readU32LE(sectionData, itemStart)
+    let materialCount = readU32LE(sectionData, itemStart + 4)
+    let expectedLength = 12'u64 + uint64(materialCount) * 4'u64
+    if expectedLength > uint64(itemLength):
+      raise newException(IOError, "Rigid-model material list exceeds item bounds")
+
+    var cursor = itemStart + 8
+    var materials: seq[uint32]
+    for _ in 0 ..< int(materialCount):
+      materials.add(readU32LE(sectionData, cursor))
+      cursor += 4
+    let meshId = readU32LE(sectionData, cursor)
+    cursor += 4
+
+    totalMaterialLinks += uint64(materialCount)
+    uniqueMeshIds.incl(meshId)
+    headerValues.incl(header)
+    if cursor != itemLimit:
+      inc recordsWithTrailingBytes
+
+    if itemIndex < 8:
+      echo "Rigid-model item id=", itemId, " bytes=", itemLength,
+        " header=0x", toHex(header, 8), " materials=", materials,
+        " mesh id=", meshId, " trailing bytes=", itemLimit - cursor
+
+  echo "Rigid-model items: ", sectionCount
+  echo "Material links: ", totalMaterialLinks
+  echo "Distinct referenced mesh IDs: ", uniqueMeshIds.len
+  echo "Header values: ", headerValues
+  echo "Records with trailing bytes: ", recordsWithTrailingBytes
+
 proc readSectionTable(image: IsoImage, dataFile: IsoEntry, offset: int64,
     sectionLength: uint32): seq[uint8] =
   let fixedLength = int(min(sectionLength, 12'u32))
@@ -246,13 +305,19 @@ proc inspectIsoResource(imagePath, requestedPath: string, nestedIndex,
       let modelOffset = sectionOffset + int64(modelSection.offset)
       let modelData = image.readSlice(dataFile, modelOffset,
         int(modelSection.byteLength))
-      echo "Model table for nested section index ", modelIndex,
+      echo "Item table for nested section index ", modelIndex,
         " (id=", modelSection.id, ", bytes=", modelSection.byteLength, ")"
-      inspectModelItems(modelData, modelSection.byteLength)
+      if modelSection.id == 2:
+        inspectModelItems(modelData, modelSection.byteLength)
+      elif modelSection.id in [3'u32, 6'u32]:
+        inspectRigidModels(modelData, modelSection.byteLength)
+      else:
+        echo "No specialized item parser for nested section ID ",
+          modelSection.id
 
 proc main() =
   if paramCount() notin [2, 3, 4]:
-    quit("Usage: rm2_inspect <image.iso> <path-inside-CRASH.BD> [outer-section-index [nested-section-index]]", 1)
+    quit("Usage: rm2_inspect <image.iso> <path-inside-CRASH.BD> [outer-section-index [item-section-index]]", 1)
 
   var nestedIndex = -1
   var modelIndex = -1
@@ -265,7 +330,7 @@ proc main() =
     try:
       modelIndex = parseInt(paramStr(4))
     except ValueError:
-      quit("Nested section index must be an integer", 1)
+      quit("Item section index must be an integer", 1)
 
   try:
     inspectIsoResource(paramStr(1), paramStr(2), nestedIndex, modelIndex)
