@@ -115,6 +115,8 @@ proc exportRecord(imagePath: string, recordIndex: int, outputPath: string,
     tableTrackChunkBytes
   if trackChunkBytes <= 0 or trackChunkBytes mod BlockSize != 0:
     raise newException(IOError, "Track chunk size must be a positive multiple of 16 bytes")
+  if byteLength <= 0:
+    raise newException(IOError, "Type-1 range must contain at least one track pair")
   if byteLength mod (trackChunkBytes * 2) != 0:
     raise newException(IOError, "Type-1 range is not a whole number of paired track chunks")
   if trackEndOffset <= 0 or trackEndOffset > trackChunkBytes or
