@@ -20,7 +20,7 @@ An experimental native reimplementation of *Crash Twinsanity* in Nim. The projec
 
 ## Current status
 
-The renderer opens an 800 × 600 window, draws a rotating colored cube, and supports basic camera translation. It can also read a PSMT8 texture and its mip levels directly from a user-supplied ISO, then preview either that texture or a selected model item on a rotating textured mesh. Full level geometry, game-accurate material assignment and shader behavior, and game rendering are not integrated yet.
+The renderer opens an 800 × 600 window, draws a rotating colored cube, and supports basic camera translation. It can read textures and models directly from a user-supplied ISO, and it now has an experimental preview for a bounded group of placed models. That preview follows instance, object, OGI, rigid-model, geometry, and texture references across archive resources. Level geometry, confirmed transform conventions, game-accurate material/shader behavior, and gameplay are not integrated yet.
 
 The research tools can inspect an ISO image directly. Current format work covers ISO9660 filesystems, `.BH`/`.BD` archive indexes, `.MH`/`.MB` tables, and `.RM2`/`.SM2` sections, texture and material links, bounded VIF commands, and decoded model positions, normals, UV/color attributes, emissive-color candidates, and triangle strips. Music record 7 now decodes using the 64 KiB two-track interleave and end offset inferred from `MUSIC.MH`; the user confirmed that the generated WAV sounds identical to the retail game. The relevant playback setup was cross-referenced with Smartkin's `twinsanity-reversed` decompilation, with attribution and licensing limits documented below. In the Cavern samples, all parsed shader texture IDs and rigid-model material links resolve to sibling records. A Nim PSMT8 decoder converts all 75 Cavern textures and their mip levels into RGBA in memory, and the renderer can preview selected textures and model items directly from the ISO. The model inspector lists every resolving material/texture pair and reports normal/emissive attribute coverage for an item. The default model preview uses the first pair; an explicitly experimental mode applies material links to submodels in list order when their counts match. The initial Crash model preview was recognized by the user as the spinning Crash model, a useful visual check that does not establish the mapping for all models. One decoded base texture has also been visually reviewed. Findings and open questions are tracked in [the asset investigation notes](docs/asset-investigation.md). Format labels taken from community tools are identified as their authors' classifications; observed facts and unresolved interpretations are kept separate.
 
@@ -97,6 +97,14 @@ To preview a model item, pass `--model`, the ISO path, resource path, and model 
 ```sh
 main --model /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2" 4263539267
 ```
+
+To preview the first 32 object placements from a resource instance group, pass the outer and nested section-table indices. This mode reads resources directly from the ISO and does not extract them:
+
+```powershell
+.\main.exe --placements ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.rm2" 4 6
+```
+
+Add a final integer to change the record limit. The preview shows the first loadable model candidate for each placement and centers the camera on the selected positions. Primary 16-bit rotation words are treated as turns with 65,536 units per revolution and composed in XYZ Euler order; the companion `COMRot` words are ignored. This rotation interpretation is experimental, instance relationships are not applied, and the preview is for validating placement layout rather than claiming game-accurate transforms.
 
 For models where the number of resolved material links matches the number of submodels, the renderer can try assigning those links to submodels in list order. This is an unverified format hypothesis and is enabled only by the explicit flag:
 
