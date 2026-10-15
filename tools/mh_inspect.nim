@@ -92,6 +92,7 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
   var typeOneInvalidFrameHeaders = 0
   var typeOneFrameHeaderBytes: array[256, int]
   var typeOneFrameFlagBytes: array[256, int]
+  var typeOneWord3Counts = initTable[uint32, int]()
 
   for recordIndex in 0 ..< int(declaredCount):
     let base = TableHeaderSize + recordIndex * RecordSize
@@ -109,6 +110,12 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
 
     if kind == 1:
       inc typeOneCount
+      let word3 = readU32LE(headerData, base + 12)
+      typeOneWord3Counts.mgetOrPut(word3, 0).inc
+      echo "Type-1 table record ", recordIndex, ": length=", byteLength,
+        " offset=", byteOffset,
+        " word3=", word3,
+        " word4=", readU32LE(headerData, base + 16)
       if byteLength mod 16 == 0:
         inc alignedTypeOneCount
       if byteOffset mod 16 == 0:
@@ -208,6 +215,9 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
     " / ", typeOneCount
   echo "Type-1 offsets divisible by 16: ", alignedTypeOneOffsetCount,
     " / ", typeOneCount
+  echo "Type-1 raw word3 value frequencies (possible sample-rate field):"
+  for value, count in typeOneWord3Counts:
+    echo "  ", value, ": ", count
   echo "Type-1 ranges with a 16-byte zero prefix: ", typeOneZeroPrefixCount,
     " / ", typeOneCount
   echo "Type-1 ranges with 0x000C words at +0x10..+0xD0: ",
