@@ -17,10 +17,16 @@
 # The GS address tables follow the PSMT8 mapping described by Twinsanity Editor's
 # MIT-licensed EzSwizzle.cs. Its copyright and license are in docs/THIRD_PARTY_LICENSES.md.
 type
+  DecodedMip* = object
+    width*: int
+    height*: int
+    rgba*: seq[uint8]
+
   DecodedTexture* = object
     width*: int
     height*: int
     rgba*: seq[uint8]
+    mipLevels*: seq[DecodedMip]
 
 const
   gsMemoryBytes = 4 * 1024 * 1024
@@ -109,8 +115,11 @@ proc decodePsmT8*(item: openArray[uint8]): DecodedTexture =
 
   let widthExponent = int(int16(readU16LE(item, 8)))
   let heightExponent = int(int16(readU16LE(item, 10)))
+  let mipCount = max(0, int(item[12]) - 1)
   if widthExponent notin 0 .. 10 or heightExponent notin 0 .. 10:
     raise newException(ValueError, "Texture dimensions are outside supported bounds")
+  if mipCount > 6:
+    raise newException(ValueError, "Texture has more mip levels than its header stores")
   if item[13] != 0x13:
     raise newException(ValueError, "Texture is not PSMT8")
 
@@ -118,6 +127,11 @@ proc decodePsmT8*(item: openArray[uint8]): DecodedTexture =
   let height = 1 shl heightExponent
   let textureBufferWidth = int(readU32LE(item, 48))
   let clutBasePointer = int(readU32LE(item, 76))
+  var mipBasePointers: array[6, uint32]
+  var mipBufferWidths: array[6, uint32]
+  for mip in 0 ..< 6:
+    mipBasePointers[mip] = readU32LE(item, 24 + mip * 4)
+    mipBufferWidths[mip] = readU32LE(item, 52 + mip * 4)
   let transferWidth = int(readU32LE(item, 180))
   let transferHeight = int(readU32LE(item, 184))
   let imageByteCount = int(textureSize - 224'u32)
@@ -155,18 +169,36 @@ proc decodePsmT8*(item: openArray[uint8]): DecodedTexture =
     for index in 8 + group * 32 ..< 16 + group * 32:
       swap(palette[index], palette[index + 8])
 
+  proc decodeLevel(levelWidth, levelHeight, bufferWidth, basePointer: int): seq[uint8] =
+    if levelWidth > high(int) div levelHeight or
+        levelWidth * levelHeight > high(int) div 4:
+      raise newException(ValueError, "Texture mip size overflows host limits")
+    if bufferWidth <= 0 or basePointer < 0 or basePointer > gsMemory.len div 256:
+      raise newException(ValueError, "Texture mip has invalid GS buffer metadata")
+    let baseOffset = basePointer * 256
+    result = newSeq[uint8](levelWidth * levelHeight * 4)
+    for y in 0 ..< levelHeight:
+      for x in 0 ..< levelWidth:
+        let sourceOffset = baseOffset + psmT8Address(x, y, bufferWidth div 2)
+        if sourceOffset < 0 or sourceOffset >= gsMemory.len:
+          raise newException(ValueError, "Texture mip texel exceeds GS memory")
+        let color = palette[int(gsMemory[sourceOffset])]
+        let destinationPixel = (levelHeight - y - 1) * levelWidth + x
+        let destinationOffset = destinationPixel * 4
+        for channel in 0 ..< 3:
+          result[destinationOffset + channel] = color[channel]
+        result[destinationOffset + 3] = uint8((int(color[3]) shl 1) and 0xFF)
+
   result.width = width
   result.height = height
-  result.rgba = newSeq[uint8](width * height * 4)
-  let textureBufferPages = textureBufferWidth div 2
-  for y in 0 ..< height:
-    for x in 0 ..< width:
-      let sourceOffset = psmT8Address(x, y, textureBufferPages)
-      if sourceOffset < 0 or sourceOffset >= gsMemory.len:
-        raise newException(ValueError, "Texture texel exceeds GS memory")
-      let color = palette[int(gsMemory[sourceOffset])]
-      let destinationPixel = (height - y - 1) * width + x
-      let destinationOffset = destinationPixel * 4
-      for channel in 0 ..< 3:
-        result.rgba[destinationOffset + channel] = color[channel]
-      result.rgba[destinationOffset + 3] = uint8((int(color[3]) shl 1) and 0xFF)
+  result.rgba = decodeLevel(width, height, textureBufferWidth, 0)
+  for mip in 0 ..< mipCount:
+    let mipWidth = max(8, width div (1 shl (mip + 1)))
+    let mipHeight = max(8, height div (1 shl (mip + 1)))
+    let mipBufferWidth = int(mipBufferWidths[mip])
+    let mipBasePointer = int(mipBasePointers[mip])
+    result.mipLevels.add(DecodedMip(
+      width: mipWidth,
+      height: mipHeight,
+      rgba: decodeLevel(mipWidth, mipHeight, mipBufferWidth, mipBasePointer)
+    ))
