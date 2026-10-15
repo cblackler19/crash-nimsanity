@@ -65,8 +65,10 @@ proc decodeBlock(blockData: openArray[uint8], previousOne,
     previousTwo = previousOne
     previousOne = decoded
 
-proc makeWav(samples: openArray[int16], sampleRate: uint32): seq[uint8] =
-  let dataBytes = uint32(samples.len * 2)
+proc makeWav(left, right: openArray[int16], sampleRate: uint32): seq[uint8] =
+  if left.len != right.len:
+    raise newException(IOError, "Stereo channels have different sample counts")
+  let dataBytes = uint32(left.len * 4)
   result = @[
     uint8('R'), uint8('I'), uint8('F'), uint8('F')]
   result.appendU32LE(36'u32 + dataBytes)
@@ -74,15 +76,16 @@ proc makeWav(samples: openArray[int16], sampleRate: uint32): seq[uint8] =
     uint8('f'), uint8('m'), uint8('t'), uint8(' ')])
   result.appendU32LE(16)
   result.appendU16LE(1)
-  result.appendU16LE(1)
-  result.appendU32LE(sampleRate)
-  result.appendU32LE(sampleRate * 2)
   result.appendU16LE(2)
+  result.appendU32LE(sampleRate)
+  result.appendU32LE(sampleRate * 4)
+  result.appendU16LE(4)
   result.appendU16LE(16)
   result.add([uint8('d'), uint8('a'), uint8('t'), uint8('a')])
   result.appendU32LE(dataBytes)
-  for sample in samples:
-    result.appendU16LE(cast[uint16](sample))
+  for index in 0 ..< left.len:
+    result.appendU16LE(cast[uint16](left[index]))
+    result.appendU16LE(cast[uint16](right[index]))
 
 proc exportRecord(imagePath: string, recordIndex: int, outputPath: string) =
   let image = openIso(imagePath)
@@ -102,27 +105,35 @@ proc exportRecord(imagePath: string, recordIndex: int, outputPath: string) =
   let byteLength = int(readU32LE(headerData, recordBase + 4))
   let byteOffset = readU32LE(headerData, recordBase + 8)
   let sampleRate = readU32LE(headerData, recordBase + 12)
-  if byteLength mod BlockSize != 0:
-    raise newException(IOError, "Type-1 range is not a whole number of blocks")
+  if byteLength mod (BlockSize * 2) != 0:
+    raise newException(IOError, "Type-1 range is not a whole number of stereo block pairs")
   if sampleRate notin [32000'u32, 48000'u32]:
     raise newException(IOError, "Unrecognized candidate sample rate")
 
   let encoded = image.readSlice(payload, int64(byteOffset), byteLength)
-  var samples = newSeqOfCap[int16](byteLength div BlockSize * SamplesPerBlock)
-  var previousOne = 0
-  var previousTwo = 0
-  for blockOffset in countup(0, encoded.len - BlockSize, BlockSize):
-    let decodedBlock = decodeBlock(encoded.toOpenArray(blockOffset,
-      blockOffset + BlockSize - 1), previousOne, previousTwo)
-    for sample in decodedBlock:
-      samples.add(sample)
+  let samplesPerChannel = byteLength div (BlockSize * 2) * SamplesPerBlock
+  var leftSamples = newSeqOfCap[int16](samplesPerChannel)
+  var rightSamples = newSeqOfCap[int16](samplesPerChannel)
+  var leftPreviousOne = 0
+  var leftPreviousTwo = 0
+  var rightPreviousOne = 0
+  var rightPreviousTwo = 0
+  for pairOffset in countup(0, encoded.len - BlockSize * 2, BlockSize * 2):
+    let leftBlock = decodeBlock(encoded.toOpenArray(pairOffset,
+      pairOffset + BlockSize - 1), leftPreviousOne, leftPreviousTwo)
+    let rightBlock = decodeBlock(encoded.toOpenArray(pairOffset + BlockSize,
+      pairOffset + BlockSize * 2 - 1), rightPreviousOne, rightPreviousTwo)
+    for sample in leftBlock:
+      leftSamples.add(sample)
+    for sample in rightBlock:
+      rightSamples.add(sample)
 
-  let wav = makeWav(samples, sampleRate)
+  let wav = makeWav(leftSamples, rightSamples, sampleRate)
   writeFile(outputPath, cast[string](wav))
   echo "Record ", recordIndex, ": ", byteLength, " encoded bytes, ",
-    samples.len, " mono samples at ", sampleRate, " Hz"
-  echo "Wrote candidate PSX ADPCM decode to ", outputPath
-  echo "This diagnostic assumes one continuous mono stream with state reset at the record boundary."
+    leftSamples.len, " stereo sample frames at ", sampleRate, " Hz"
+  echo "Wrote candidate stereo PSX ADPCM decode to ", outputPath
+  echo "This diagnostic assumes alternating 16-byte channel blocks and resets each channel's predictor at the record boundary."
 
 proc main() =
   if paramCount() notin [2, 3]:
