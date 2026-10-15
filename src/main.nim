@@ -8,12 +8,14 @@ const vertexShaderSource = """
 
 layout (location = 0) in vec3 aPosition;
 layout (location = 1) in vec3 aColor;
-uniform mat4 uTransform;
+uniform mat4 uModel;
+uniform mat4 uView;
+uniform mat4 uProjection;
 
 out vec3 vertexColor;
 
 void main() {
-    gl_Position = uTransform * vec4(aPosition, 1.0);
+    gl_Position = uProjection * uView * uModel * vec4(aPosition, 1.0);
     vertexColor = aColor;
 }
 """
@@ -30,17 +32,83 @@ void main() {
 }
 """
 
-proc rotationMatrixZ(angle: float32): array[16, float32] =
+type Mat4 = array[16, float32]
+
+proc multiply(a, b: Mat4): Mat4 =
+    # Matrices use OpenGL's column-major storage convention.
+    for column in 0 .. 3:
+        for row in 0 .. 3:
+            for i in 0 .. 3:
+                result[column * 4 + row] += a[i * 4 + row] * b[column * 4 + i]
+
+proc rotationMatrixX(angle: float32): Mat4 =
     let c = cos(angle)
     let s = sin(angle)
 
-    # OpenGL consumes matrices in column-major order.
     result = [
-        c,    s,    0.0'f32, 0.0'f32,
-        -s,   c,    0.0'f32, 0.0'f32,
-        0.0'f32, 0.0'f32, 1.0'f32, 0.0'f32,
+        1.0'f32, 0.0'f32, 0.0'f32, 0.0'f32,
+        0.0'f32, c,        s,        0.0'f32,
+        0.0'f32, -s,       c,        0.0'f32,
         0.0'f32, 0.0'f32, 0.0'f32, 1.0'f32
     ]
+
+proc rotationMatrixY(angle: float32): Mat4 =
+    let c = cos(angle)
+    let s = sin(angle)
+
+    result = [
+        c,        0.0'f32, -s,       0.0'f32,
+        0.0'f32, 1.0'f32, 0.0'f32, 0.0'f32,
+        s,        0.0'f32, c,        0.0'f32,
+        0.0'f32, 0.0'f32, 0.0'f32, 1.0'f32
+    ]
+
+proc translationMatrix(x, y, z: float32): Mat4 =
+    result = [
+        1.0'f32, 0.0'f32, 0.0'f32, 0.0'f32,
+        0.0'f32, 1.0'f32, 0.0'f32, 0.0'f32,
+        0.0'f32, 0.0'f32, 1.0'f32, 0.0'f32,
+        x,        y,        z,        1.0'f32
+    ]
+
+proc perspectiveMatrix(fovRadians, aspect, nearPlane, farPlane: float32): Mat4 =
+    let f = 1.0'f32 / tan(fovRadians / 2.0'f32)
+
+    result = [
+        f / aspect, 0.0'f32, 0.0'f32, 0.0'f32,
+        0.0'f32, f, 0.0'f32, 0.0'f32,
+        0.0'f32, 0.0'f32,
+        (farPlane + nearPlane) / (nearPlane - farPlane), -1.0'f32,
+        0.0'f32, 0.0'f32,
+        (2.0'f32 * farPlane * nearPlane) / (nearPlane - farPlane), 0.0'f32
+    ]
+
+proc addVertex(vertices: var seq[float32], position, color: array[3, float32]) =
+    for value in position:
+        vertices.add(value)
+    for value in color:
+        vertices.add(value)
+
+proc addTriangle(vertices: var seq[float32], a, b, c: array[3, float32], color: array[3, float32]) =
+    vertices.addVertex(a, color)
+    vertices.addVertex(b, color)
+    vertices.addVertex(c, color)
+
+proc addFace(vertices: var seq[float32], a, b, c, d: array[3, float32], color: array[3, float32]) =
+    vertices.addTriangle(a, b, c, color)
+    vertices.addTriangle(a, c, d, color)
+
+proc cubeVertices(): seq[float32] =
+    const p = 0.5'f32
+
+    result = newSeqOfCap[float32](36 * 6)
+
+    result.addFace([-p, -p, p], [p, -p, p], [p, p, p], [-p, p, p], [1.0'f32, 0.3'f32, 0.2'f32])
+    result.addFace([p, -p, -p], [-p, -p, -p], [-p, p, -p], [p, p, -p], [0.2'f32, 0.4'f32, 1.0'f32])
+    result.addFace([-p, -p, -p], [-p, -p, p], [-p, p, p], [-p, p, -p], [0.3'f32, 1.0'f32, 0.4'f32])
+    result.addFace([p, -p, p], [p, -p, -p], [p, p, -p], [p, p, p], [1.0'f32, 0.8'f32, 0.2'f32])
+    result.addFace([-p, p, p], [p, p, p], [p, p, -p], [-p, p, -p], [0.8'f32, 0.3'f32, 1.0'f32])
+    result.addFace([-p, -p, -p], [p, -p, -p], [p, -p, p], [-p, -p, p], [0.2'f32, 0.9'f32, 1.0'f32])
 
 proc compileShader(kind: GLenum, source: string): GLuint =
     result = glCreateShader(kind)
@@ -112,14 +180,14 @@ proc main() =
     glDeleteShader(vertexShader)
     glDeleteShader(fragmentShader)
 
-    let transformLocation = glGetUniformLocation(shaderProgram, "uTransform")
+    let modelLocation = glGetUniformLocation(shaderProgram, "uModel")
+    let viewLocation = glGetUniformLocation(shaderProgram, "uView")
+    let projectionLocation = glGetUniformLocation(shaderProgram, "uProjection")
 
-    # Each vertex stores its position followed by its RGB color.
-    var vertices: array[18, float32] = [
-         0.0'f32,  0.5'f32, 0.0'f32, 1.0'f32, 0.2'f32, 0.2'f32,
-        -0.5'f32, -0.5'f32, 0.0'f32, 0.2'f32, 1.0'f32, 0.2'f32,
-         0.5'f32, -0.5'f32, 0.0'f32, 0.2'f32, 0.2'f32, 1.0'f32
-    ]
+    # Enable depth testing so nearer cube faces cover farther faces.
+    glEnable(GL_DEPTH_TEST)
+
+    let vertices = cubeVertices()
 
     # create vertex array and buffer
     var vao, vbo: GLuint
@@ -132,7 +200,7 @@ proc main() =
 
     glBufferData(
         GL_ARRAY_BUFFER,
-        sizeof(vertices),
+        vertices.len * sizeof(float32),
         vertices[0].addr,
         GL_STATIC_DRAW
     )
@@ -179,15 +247,22 @@ proc main() =
 
         # clear the framebuffer
         glClearColor(0.12'f32, 0.14'f32, 0.18'f32, 1.0'f32)
-        glClear(GL_COLOR_BUFFER_BIT)
+        glClear(GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT)
 
-        # render triangle
+        # Render a rotating cube through model, view, and perspective matrices.
         glUseProgram(shaderProgram)
-        let transform = rotationMatrixZ(float32(glfwGetTime()))
-        glUniformMatrix4fv(transformLocation, 1, GLboolean(0), transform[0].addr)
+        let time = float32(glfwGetTime())
+        let model = multiply(rotationMatrixY(time * 0.7'f32), rotationMatrixX(time * 0.5'f32))
+        let view = translationMatrix(0.0'f32, 0.0'f32, -3.0'f32)
+        let aspect = if width > 0 and height > 0: float32(width) / float32(height) else: 1.0'f32
+        let projection = perspectiveMatrix(45.0'f32 * PI.float32 / 180.0'f32, aspect, 0.1'f32, 100.0'f32)
+
+        glUniformMatrix4fv(modelLocation, 1, GLboolean(0), model[0].addr)
+        glUniformMatrix4fv(viewLocation, 1, GLboolean(0), view[0].addr)
+        glUniformMatrix4fv(projectionLocation, 1, GLboolean(0), projection[0].addr)
         glBindVertexArray(vao)
 
-        glDrawArrays(GL_TRIANGLES, 0, 3)
+        glDrawArrays(GL_TRIANGLES, 0, 36)
 
         window.swapBuffers()
 
