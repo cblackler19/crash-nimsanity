@@ -816,6 +816,8 @@ proc inspectTextureItems(sectionData: openArray[uint8], sectionLength: uint32) =
   var transferPayloadMatches = 0'u64
   var decodedTextureCount = 0'u64
   var decodedPixelCount = 0'u64
+  var decodedMipCount = 0'u64
+  var decodedMipPixelCount = 0'u64
   var decodedColors = initHashSet[uint32]()
   var totalImageBytes = 0'u64
   var dimensionSamples: seq[string]
@@ -867,6 +869,9 @@ proc inspectTextureItems(sectionData: openArray[uint8], sectionLength: uint32) =
       let decoded = decodePsmT8(sectionData[itemStart ..< int(itemEnd)])
       inc decodedTextureCount
       decodedPixelCount += uint64(decoded.width) * uint64(decoded.height)
+      decodedMipCount += uint64(decoded.mipLevels.len)
+      for mip in decoded.mipLevels:
+        decodedMipPixelCount += uint64(mip.width) * uint64(mip.height)
       for pixel in 0 ..< decoded.width * decoded.height:
         let colorOffset = pixel * 4
         let packedColor = uint32(decoded.rgba[colorOffset]) or
@@ -892,6 +897,8 @@ proc inspectTextureItems(sectionData: openArray[uint8], sectionLength: uint32) =
     transferPayloadMatches, " / ", itemCount
   echo "PSMT8 textures decoded in memory: ", decodedTextureCount
   echo "Decoded base-image pixels: ", decodedPixelCount
+  echo "Decoded mip levels and pixels: ", decodedMipCount, " / ",
+    decodedMipPixelCount
   echo "Distinct decoded RGBA colors across sample: ", decodedColors.len
   echo "Image payload bytes: ", totalImageBytes
   echo "Pixel format counts:"
