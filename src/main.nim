@@ -386,6 +386,14 @@ proc main() =
     if window.keyDown(GLFWKey.R): movement.y += 1.0'f32
     if window.keyDown(GLFWKey.F): movement.y -= 1.0'f32
     camera.moveCamera(movement, deltaTime)
+    var yawInput = 0.0'f32
+    var pitchInput = 0.0'f32
+    if window.keyDown(GLFWKey.Q): yawInput -= 1.0'f32
+    if window.keyDown(GLFWKey.E): yawInput += 1.0'f32
+    if window.keyDown(GLFWKey.T): pitchInput += 1.0'f32
+    if window.keyDown(GLFWKey.G): pitchInput -= 1.0'f32
+    camera.rotateCamera(yawInput * 1.5'f32 * deltaTime,
+      pitchInput * 1.5'f32 * deltaTime)
 
     glClearColor(0.12'f32, 0.14'f32, 0.18'f32, 1.0'f32)
     glClear(GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT)
