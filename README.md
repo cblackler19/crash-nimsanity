@@ -63,7 +63,7 @@ The repository includes these utilities:
 | `iso9660_inspect` | List ISO9660 directories or print a bounded hexadecimal file range. |
 | `bh_inspect` | Parse a `.BH` archive index and optionally check its ranges against the paired `.BD`. |
 | `mh_inspect` | Compare `.MH` records with candidate ranges in the paired `.MB`. |
-| `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables and bounded model or rigid-model records. |
+| `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, bounded model/rigid-model records, and VIF block lengths. |
 | `elf_mips_refs` | Find direct MIPS immediate references to strings in a supplied ELF executable. |
 
 The examples below use POSIX shell syntax. In PowerShell, prefix local tools with `.` (for example, `.\tools\rm2_inspect.exe`) and use the `.exe` suffix.
@@ -100,7 +100,7 @@ Game images, executables, and extracted assets are not part of this repository. 
 
 ## Credits and research references
 
-- [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), by Smartkin, Artem Yashin (NeoKesha), and BetaM, is MIT licensed. Its archive, section, model, and rigid-model readers informed format cross-checks. No source code was copied or adapted; the local ISO samples were parsed independently. If MIT-licensed code is incorporated in the future, its required copyright and permission notices must be retained.
+- [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), by Smartkin, Artem Yashin (NeoKesha), and BetaM, is MIT licensed. Its archive, section, model, rigid-model, and VIF/DMA readers informed format cross-checks. No source code was copied or adapted; the local ISO samples were parsed independently. If MIT-licensed code is incorporated in the future, its required copyright and permission notices must be retained.
 - [KnuxLib](https://github.com/Knuxfan24/KnuxLib), by Knuxfan24, is MIT licensed and independently recognizes the `.BH`/`.BD` archive pairing. It was used as a format reference; no code was copied.
 - The full source list, attributions, and research limitations are maintained in [the asset investigation notes](docs/asset-investigation.md).
 

@@ -38,6 +38,12 @@ proc readU32LE(data: openArray[uint8], offset: int): uint32 =
     (uint32(data[offset + 2]) shl 16) or
     (uint32(data[offset + 3]) shl 24)
 
+proc readU16LE(data: openArray[uint8], offset: int): uint16 =
+  if offset < 0 or offset > data.len - 2:
+    raise newException(IOError, "Unexpected end of file while reading a halfword")
+
+  uint16(data[offset]) or (uint16(data[offset + 1]) shl 8)
+
 proc parseArchiveEntry(data: openArray[uint8], cursor: var int): ArchiveEntry =
   let pathLength = readU32LE(data, cursor)
   let remaining = data.len - cursor - 4
@@ -130,6 +136,14 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
   var totalVifBytes = 0'u64
   var totalBlobBytes = 0'u64
   var recordsWithTrailingBytes = 0'u64
+  var sampledVif = false
+  var vifStreamsWithQwc = 0'u64
+  var vifStreamsMatchingQwcLength = 0'u64
+  var vifStreamsWithZeroQwcTail = 0'u64
+  var vifStreamsWithNonzeroQwcTail = 0'u64
+  var minQwcLengthDifference = high(int64)
+  var maxQwcLengthDifference = low(int64)
+  var minPositiveQwcLengthDifference = high(int64)
 
   for itemIndex in 0 ..< int(sectionCount):
     let entryOffset = 12 + itemIndex * 12
@@ -159,6 +173,57 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
       cursor += 8
       if uint64(vifLength) > uint64(itemLimit - cursor - 4):
         raise newException(IOError, "VIF payload extends beyond model item")
+      # Compare the DMA tag's QWC span with the bounded VIF field and inspect any tail.
+      if vifLength >= 16:
+        let qwc = readU16LE(sectionData, cursor)
+        let tagAndPayloadBytes = 16'u64 + uint64(qwc) * 16'u64
+        let difference = int64(vifLength) - int64(tagAndPayloadBytes)
+        inc vifStreamsWithQwc
+        if difference == 0:
+          inc vifStreamsMatchingQwcLength
+        elif difference > 0:
+          minPositiveQwcLengthDifference = min(
+            minPositiveQwcLengthDifference, difference
+          )
+          let tailStart = cursor + int(tagAndPayloadBytes)
+          var tailIsZero = true
+          for tailIndex in tailStart ..< tailStart + int(difference):
+            if sectionData[tailIndex] != 0:
+              tailIsZero = false
+              break
+          if tailIsZero:
+            inc vifStreamsWithZeroQwcTail
+          else:
+            inc vifStreamsWithNonzeroQwcTail
+        minQwcLengthDifference = min(minQwcLengthDifference, difference)
+        maxQwcLengthDifference = max(maxQwcLengthDifference, difference)
+      if not sampledVif:
+        let sampleLength = min(32, int(vifLength))
+        var sample = ""
+        for byteIndex in 0 ..< sampleLength:
+          if byteIndex > 0:
+            sample.add(' ')
+          sample.add(toHex(int(sectionData[cursor + byteIndex]), 2))
+        echo "First VIF stream prefix: ", sample
+        if vifLength >= 16:
+          let qwc = readU16LE(sectionData, cursor)
+          let qwcPayloadBytes = uint64(qwc) * 16'u64
+          let dmaTagAndPayloadBytes = 16'u64 + qwcPayloadBytes
+          echo "Low-word QWC candidate: ", qwc,
+            " (payload bytes=", qwcPayloadBytes,
+            ", tag+payload bytes=", dmaTagAndPayloadBytes,
+            ", declared VIF bytes=", vifLength,
+            ", difference=", int64(vifLength) - int64(dmaTagAndPayloadBytes), ")"
+          if uint64(vifLength) > dmaTagAndPayloadBytes:
+            let extraStart = cursor + int(dmaTagAndPayloadBytes)
+            let extraLength = int(uint64(vifLength) - dmaTagAndPayloadBytes)
+            var extra = ""
+            for byteIndex in 0 ..< extraLength:
+              if byteIndex > 0:
+                extra.add(' ')
+              extra.add(toHex(int(sectionData[extraStart + byteIndex]), 2))
+            echo "Bytes after tag+QWC range: ", extra
+        sampledVif = true
       cursor += int(vifLength)
       let blobLength = readU32LE(sectionData, cursor)
       cursor += 4
@@ -189,6 +254,16 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
   echo "VIF bytes: ", totalVifBytes
   echo "Blob bytes: ", totalBlobBytes
   echo "Records with trailing bytes: ", recordsWithTrailingBytes
+  echo "VIF streams where tag+QWC matches declared length: ",
+    vifStreamsMatchingQwcLength, " / ", vifStreamsWithQwc
+  echo "Streams with zero bytes after tag+QWC: ", vifStreamsWithZeroQwcTail
+  echo "Streams with nonzero bytes after tag+QWC: ",
+    vifStreamsWithNonzeroQwcTail
+  if vifStreamsWithQwc > 0:
+    echo "VIF declared-length minus tag+QWC range: ",
+      minQwcLengthDifference, " to ", maxQwcLengthDifference, " bytes"
+  if minPositiveQwcLengthDifference != high(int64):
+    echo "Smallest positive VIF tail: ", minPositiveQwcLengthDifference, " bytes"
 
 proc inspectRigidModels(sectionData: openArray[uint8], sectionLength: uint32) =
   if sectionData.len < 12:
