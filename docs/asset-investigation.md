@@ -43,9 +43,15 @@ In `MUSIC.MH`, records 7 through 10 have word 0 equal to `1`. Their word 2 value
 
 The read-only Nim utility [`bh_inspect.nim`](../tools/bh_inspect.nim) parses this layout, reports each path and range, and can check that ranges stay within a supplied `.BD` file. The data image itself was not extracted. `CRASH.BD` begins with `03 00 00 00`; this alone does not identify its internal format.
 
-The local game executable contains strings including `.BH`, `.BD`, `%s.mb`, `Crash6\Crash`, `Crash6\Music`, `STREAM.IRX`, `CDVDSTM.IRX`, and `streaming options`. These strings are consistent with the game referencing the named files and a streaming subsystem, but do not prove the exact open/read sequence or container semantics.
+The local game executable contains strings including `.BH`, `.BD`, `%s.mb`, `Crash6\Crash`, `Crash6\Music`, `STREAM.IRX`, `CDVDSTM.IRX`, and `streaming options`.
+
+A direct MIPS reference scan finds `.BH` and `.BD` addresses materialized in adjacent calls to executable address `0x00203ED0` from the routine beginning at `0x002B46A8`. The helper reads the suffix length, updates a caller-provided buffer's length/capacity fields, and invokes copy helpers with the suffix; this supports identifying it as a string-building routine. The caller appends `.BH` to a buffer at its stack base and `.BD` to a second buffer 16 bytes later.
+
+The caller then passes the two resulting buffer pointers in `$a1` and `$a2` to the same routine at `0x002AB688`, with a separate value `5` in `$a3`. That routine forwards its `$a2` argument to `0x002AC1B8` and uses its `$a1` argument as input to another buffer-building call for a field at offset 12 of the object passed in `$a0`. This is evidence that both suffix-derived strings are consumed together while initializing an object. The current static trace does not establish that either string is opened as a filesystem path, nor does it identify the object's later use or the meaning of `$a3 = 5`.
+
+These call-site observations are consistent with the `.BH` index and `.BD` data being paired, which matches their on-disc lengths and ranges, but do not by themselves prove the exact open/read sequence or all container semantics.
 
 ## Next checks
 
 - Inspect the `MSVp` header and music type-1 payload structure further, keeping the observed range associations separate from field semantics.
-- Check executable references around the container suffix strings before claiming how the tables are consumed at runtime.
+- Trace the object created by the paired `.BH`/`.BD` string initializer to its consumers and determine whether the names are used for file access.
