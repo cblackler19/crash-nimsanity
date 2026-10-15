@@ -36,6 +36,11 @@ type
     malformed: bool
     vectorsByAddress: array[1024, uint64]
     attributeFormats: array[4, array[32, uint64]]
+    positionVectorCount: uint64
+    invalidPositionVectors: uint64
+    positionMin: array[3, float32]
+    positionMax: array[3, float32]
+    positionSamples: seq[array[3, float32]]
 
 proc readU32LE(data: openArray[uint8], offset: int): uint32 =
   if offset < 0 or offset > data.len - 4:
@@ -94,6 +99,36 @@ proc scanVifCommands(data: openArray[uint8], start,
       result.vectorsByAddress[address] += uint64(amount)
       if address in 3 .. 6:
         result.attributeFormats[address - 3][opcode and 0x1F] += 1
+      if address == 3 and (opcode and 0x1F) == 0x08:
+        let payloadStart = cursor + 4
+        for vectorIndex in 0 ..< suppliedVectors:
+          var position: array[3, float32]
+          var positionIsFinite = true
+          for component in 0 .. 2:
+            let bits = readU32LE(data,
+              payloadStart + vectorIndex * 12 + component * 4)
+            position[component] = cast[float32](bits)
+            if position[component] != position[component] or
+                abs(position[component]) >= 1.0e20'f32:
+              positionIsFinite = false
+
+          if positionIsFinite:
+            if result.positionVectorCount == 0:
+              result.positionMin = position
+              result.positionMax = position
+            else:
+              for component in 0 .. 2:
+                result.positionMin[component] = min(
+                  result.positionMin[component], position[component]
+                )
+                result.positionMax[component] = max(
+                  result.positionMax[component], position[component]
+                )
+            inc result.positionVectorCount
+            if result.positionSamples.len < 3:
+              result.positionSamples.add(position)
+          else:
+            inc result.invalidPositionVectors
     else:
       case opcode
       of 0x01: # STCYCL
@@ -231,6 +266,11 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
   var vifStreamsWithAddress = newSeq[uint64](1024)
   var vifStreamsMatchingVertexCount = newSeq[uint64](1024)
   var vifAttributeFormats: array[4, array[32, uint64]]
+  var positionVectorCount = 0'u64
+  var invalidPositionVectors = 0'u64
+  var positionMin: array[3, float32]
+  var positionMax: array[3, float32]
+  var positionSamples: seq[array[3, float32]]
 
   for itemIndex in 0 ..< int(sectionCount):
     let entryOffset = 12 + itemIndex * 12
@@ -299,6 +339,21 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
             for format in 0 ..< vifAttributeFormats[address].len:
               vifAttributeFormats[address][format] +=
                 scan.attributeFormats[address][format]
+          if scan.positionVectorCount > 0:
+            if positionVectorCount == 0:
+              positionMin = scan.positionMin
+              positionMax = scan.positionMax
+            else:
+              for component in 0 .. 2:
+                positionMin[component] = min(positionMin[component],
+                  scan.positionMin[component])
+                positionMax[component] = max(positionMax[component],
+                  scan.positionMax[component])
+            positionVectorCount += scan.positionVectorCount
+            for sample in scan.positionSamples:
+              if positionSamples.len < 3:
+                positionSamples.add(sample)
+          invalidPositionVectors += scan.invalidPositionVectors
           if scan.unsupported:
             inc vifUnsupported
           if scan.malformed:
@@ -393,6 +448,13 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
         formatSummary.add($count)
     if formatSummary.len > 0:
       echo "  address ", address + 3, ": ", formatSummary
+  echo "Address 3 V3_32 values viewed as binary32: ", positionVectorCount,
+    " finite vectors, ", invalidPositionVectors, " non-finite vectors"
+  if positionVectorCount > 0:
+    echo "  bounds: x=", positionMin[0], "..", positionMax[0],
+      " y=", positionMin[1], "..", positionMax[1],
+      " z=", positionMin[2], "..", positionMax[2]
+    echo "  first vectors: ", positionSamples
 
 proc collectSectionItemIds(sectionData: openArray[uint8],
     sectionLength: uint32): HashSet[uint32] =
