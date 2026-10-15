@@ -31,3 +31,7 @@
 /tools/texture_inspect.exe
 /tools/model_inspect
 /tools/model_inspect.exe
+/tools/mh_audio_export
+/tools/mh_audio_export.exe
+/candidate.wav
+/music-record-*.wav
