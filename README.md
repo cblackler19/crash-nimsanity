@@ -42,7 +42,7 @@ nimble run
 
 Controls in the current renderer:
 
-- `W`, `A`, `S`, `D`: move horizontally.
+- `W`, `A`, `S`, `D`: move relative to the camera's horizontal look direction.
 - `R`, `F`: move up and down.
 - `Q`, `E`: look left and right; `T`, `G`: look up and down.
 - `Esc`: close the window.
