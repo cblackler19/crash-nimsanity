@@ -23,6 +23,7 @@ type
   Vertex* = object
     position*: array[3, float32]
     color*: array[3, float32]
+    texCoord*: array[2, float32]
 
   Mesh* = object
     vao: GLuint
@@ -75,6 +76,11 @@ proc uploadMesh*(vertices: openArray[Vertex]): Mesh =
     cast[pointer](3 * sizeof(float32))
   )
   glEnableVertexAttribArray(1)
+  glVertexAttribPointer(
+    2, 2, GlFloatEnum, GLboolean(0), GLsizei(sizeof(Vertex)),
+    cast[pointer](6 * sizeof(float32))
+  )
+  glEnableVertexAttribArray(2)
 
   glBindBuffer(GL_ARRAY_BUFFER, 0)
   glBindVertexArray(0)
@@ -82,6 +88,19 @@ proc uploadMesh*(vertices: openArray[Vertex]): Mesh =
 proc createCubeMesh*(): Mesh =
   let vertices = cubeVertices()
   result = uploadMesh(vertices)
+
+proc createTexturedQuadMesh*(): Mesh =
+  let white = [1.0'f32, 1.0'f32, 1.0'f32]
+  let lowerLeft = Vertex(position: [-1.0'f32, -1.0'f32, 0.0'f32],
+    color: white, texCoord: [0.0'f32, 0.0'f32])
+  let lowerRight = Vertex(position: [1.0'f32, -1.0'f32, 0.0'f32],
+    color: white, texCoord: [1.0'f32, 0.0'f32])
+  let upperRight = Vertex(position: [1.0'f32, 1.0'f32, 0.0'f32],
+    color: white, texCoord: [1.0'f32, 1.0'f32])
+  let upperLeft = Vertex(position: [-1.0'f32, 1.0'f32, 0.0'f32],
+    color: white, texCoord: [0.0'f32, 1.0'f32])
+  result = uploadMesh([lowerLeft, lowerRight, upperRight,
+    lowerLeft, upperRight, upperLeft])
 
 proc draw*(mesh: Mesh) =
   if mesh.vertexCount == 0:
