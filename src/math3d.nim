@@ -22,6 +22,14 @@ type
 
   Mat4* = array[16, float32]
 
+proc identityMatrix*(): Mat4 =
+  result = [
+    1.0'f32, 0.0'f32, 0.0'f32, 0.0'f32,
+    0.0'f32, 1.0'f32, 0.0'f32, 0.0'f32,
+    0.0'f32, 0.0'f32, 1.0'f32, 0.0'f32,
+    0.0'f32, 0.0'f32, 0.0'f32, 1.0'f32
+  ]
+
 proc multiply*(a, b: Mat4): Mat4 =
   # Matrices use OpenGL's column-major storage convention.
   # Each output cell is the dot product of a row from `a` and a column from `b`.
