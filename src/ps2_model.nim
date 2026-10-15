@@ -29,6 +29,7 @@ type
     triangleCount*: int
     submodelVertexCounts*: seq[int]
     submodelTriangleCounts*: seq[int]
+    submodelTriangleVertexOffsets*: seq[int]
 
 proc readU16LE(data: openArray[uint8], offset: int): uint16 =
   if offset < 0 or offset > data.len - 2:
@@ -208,6 +209,7 @@ proc decodeModelItem*(sectionData: openArray[uint8], itemOffset,
 
     inc result.submodelCount
     result.submodelVertexCounts.add(vertices.len)
+    result.submodelTriangleVertexOffsets.add(expandedVertexStart)
     result.submodelTriangleCounts.add(
       (result.vertices.len - expandedVertexStart) div 3
     )
