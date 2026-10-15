@@ -14,27 +14,33 @@
 # OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 # PERFORMANCE OF THIS SOFTWARE.
 #
-import std/math
+import std/[math, os, strutils]
 import nimgl/[glfw, opengl]
 
 import camera
+import iso_texture
 import math3d
 import mesh
+import ps2_texture
+import texture2d
 
 const vertexShaderSource = """
 #version 330 core
 
 layout (location = 0) in vec3 aPosition;
 layout (location = 1) in vec3 aColor;
+layout (location = 2) in vec2 aTexCoord;
 uniform mat4 uModel;
 uniform mat4 uView;
 uniform mat4 uProjection;
 
 out vec3 vertexColor;
+out vec2 textureCoord;
 
 void main() {
     gl_Position = uProjection * uView * uModel * vec4(aPosition, 1.0);
     vertexColor = aColor;
+    textureCoord = aTexCoord;
 }
 """
 
@@ -42,13 +48,41 @@ const fragmentShaderSource = """
 #version 330 core
 
 in vec3 vertexColor;
+in vec2 textureCoord;
+uniform sampler2D uTexture;
+uniform int uUseTexture;
 
 out vec4 fragColor;
 
 void main() {
-    fragColor = vec4(vertexColor, 1.0);
+    if (uUseTexture != 0) {
+        fragColor = texture(uTexture, textureCoord);
+    } else {
+        fragColor = vec4(vertexColor, 1.0);
+    }
 }
 """
+
+proc loadPreviewTexture(): tuple[enabled: bool, decoded: DecodedTexture] =
+  if paramCount() == 0:
+    return
+  if paramCount() != 3:
+    quit("Usage: main [image.iso path-inside-CRASH.BD texture-id]", 1)
+
+  var textureId: uint32
+  try:
+    let parsedId = parseBiggestUInt(paramStr(3))
+    if parsedId > uint64(high(uint32)):
+      quit("Texture ID must fit in 32 bits", 1)
+    textureId = uint32(parsedId)
+  except ValueError:
+    quit("Texture ID must be an unsigned integer", 1)
+
+  try:
+    result.decoded = loadTextureFromIso(paramStr(1), paramStr(2), textureId)
+    result.enabled = true
+  except CatchableError as error:
+    quit("Could not load ISO texture: " & error.msg, 1)
 
 proc compileShader(kind: GLenum, source: string): GLuint =
   result = glCreateShader(kind)
@@ -71,6 +105,7 @@ proc keyDown(window: GLFWWindow, key: GLFWKey): bool =
   window.getKey(key) == GLFWPress
 
 proc main() =
+  let preview = loadPreviewTexture()
   if not glfwInit():
     system.quit("Failed to initialize GLFW", 1)
 
@@ -79,7 +114,11 @@ proc main() =
   glfwWindowHint(GLFWOpenglProfile, GLFW_OPENGL_CORE_PROFILE)
   glfwWindowHint(GLFWOpenglForwardCompat, GLFW_TRUE)
 
-  let window = glfwCreateWindow(800, 600, "crash-nimsanity")
+  let windowTitle = if preview.enabled:
+    "crash-nimsanity - ISO texture preview"
+  else:
+    "crash-nimsanity"
+  let window = glfwCreateWindow(800, 600, windowTitle)
   if window == nil:
     glfwTerminate()
     system.quit("Failed to create window", 1)
@@ -115,7 +154,12 @@ proc main() =
   let modelLocation = glGetUniformLocation(shaderProgram, "uModel")
   let viewLocation = glGetUniformLocation(shaderProgram, "uView")
   let projectionLocation = glGetUniformLocation(shaderProgram, "uProjection")
-  var cube = createCubeMesh()
+  let textureLocation = glGetUniformLocation(shaderProgram, "uTexture")
+  let useTextureLocation = glGetUniformLocation(shaderProgram, "uUseTexture")
+  var previewMesh = if preview.enabled: createTexturedQuadMesh() else: createCubeMesh()
+  var previewTexture: Texture2D
+  if preview.enabled:
+    previewTexture = uploadTexture2D(preview.decoded)
   var camera = initCamera()
 
   glEnable(GL_DEPTH_TEST)
@@ -159,7 +203,10 @@ proc main() =
     glUseProgram(shaderProgram)
     let time = float32(currentTime)
     # The shader applies transforms in model, view, then projection order.
-    let model = multiply(rotationMatrixY(time * 0.7'f32), rotationMatrixX(time * 0.5'f32))
+    let model = if preview.enabled:
+      identityMatrix()
+    else:
+      multiply(rotationMatrixY(time * 0.7'f32), rotationMatrixX(time * 0.5'f32))
     let view = camera.viewMatrix()
     let aspect = if width > 0 and height > 0: float32(width) / float32(height) else: 1.0'f32
     let projection = perspectiveMatrix(45.0'f32 * PI.float32 / 180.0'f32, aspect, 0.1'f32, 100.0'f32)
@@ -167,11 +214,16 @@ proc main() =
     glUniformMatrix4fv(modelLocation, 1, GLboolean(0), model[0].addr)
     glUniformMatrix4fv(viewLocation, 1, GLboolean(0), view[0].addr)
     glUniformMatrix4fv(projectionLocation, 1, GLboolean(0), projection[0].addr)
-    cube.draw()
+    glUniform1i(useTextureLocation, GLint(if preview.enabled: 1 else: 0))
+    if preview.enabled:
+      glUniform1i(textureLocation, 0)
+      previewTexture.bindTexture()
+    previewMesh.draw()
 
     window.swapBuffers()
 
-  cube.destroy()
+  previewMesh.destroy()
+  previewTexture.destroy()
   glDeleteProgram(shaderProgram)
   window.destroyWindow()
   glfwTerminate()
