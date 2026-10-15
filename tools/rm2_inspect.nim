@@ -17,6 +17,7 @@
 import std/[math, os, sets, strutils]
 
 import iso9660
+import ps2_model
 import ps2_texture
 
 type
@@ -413,6 +414,10 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
   var minNormalLength, maxNormalLength: float32
   var emissiveColorCount = 0'u64
   var emissiveColorMin, emissiveColorMax: array[4, uint8]
+  var reconstructedModelCount = 0'u64
+  var reconstructedSubmodelCount = 0'u64
+  var reconstructedTriangleCount = 0'u64
+  var modelDecodeFailures = 0'u64
 
   for itemIndex in 0 ..< int(sectionCount):
     let entryOffset = 12 + itemIndex * 12
@@ -428,6 +433,15 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
 
     let itemStart = int(itemOffset)
     let itemLimit = itemStart + int(itemLength)
+    try:
+      let decoded = decodeModelItem(sectionData, itemStart, int(itemLength))
+      inc reconstructedModelCount
+      reconstructedSubmodelCount += uint64(decoded.submodelCount)
+      reconstructedTriangleCount += uint64(decoded.triangleCount)
+    except ValueError as error:
+      inc modelDecodeFailures
+      if modelDecodeFailures <= 3:
+        echo "Model decoder rejected item ", itemId, ": ", error.msg
     let submodelCount = readU32LE(sectionData, itemStart)
     var cursor = itemStart + 4
     var itemVertices = 0'u64
@@ -634,6 +648,11 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
   echo "VIF bytes: ", totalVifBytes
   echo "Blob bytes: ", totalBlobBytes
   echo "Records with trailing bytes: ", recordsWithTrailingBytes
+  echo "Models decoded to triangle vertices: ", reconstructedModelCount,
+    " / ", sectionCount
+  echo "Decoded submodels and triangle count: ", reconstructedSubmodelCount,
+    " / ", reconstructedTriangleCount
+  echo "Model decode failures: ", modelDecodeFailures
   echo "VIF streams where tag+QWC matches declared length: ",
     vifStreamsMatchingQwcLength, " / ", vifStreamsWithQwc
   echo "Streams with zero bytes after tag+QWC: ", vifStreamsWithZeroQwcTail
