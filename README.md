@@ -63,7 +63,13 @@ nim c --path:src --out:tools/mh_audio_export tools/mh_audio_export.nim
 tools/mh_audio_export /path/to/Crash-Twinsanity.iso 7 candidate.wav
 ```
 
-This pairs alternating 16-byte PSX ADPCM blocks into left and right channels, takes the candidate sample rate from the record, and resets each channel's decoder history at the range boundary. The channel layout is supported by the matching duration of the Bandicoot Pursuit track, but remains a format hypothesis; see the audio observations in [the asset investigation notes](docs/asset-investigation.md).
+The exporter accepts an optional channel-chunk size in 16-byte ADPCM blocks and an optional sample-rate override. By default it tries 128 blocks (0x800 bytes) per channel chunk and uses the rate in the table. These are diagnostic hypotheses, not confirmed Twinsanity settings. For example, compare the default with a 16 kHz render:
+
+```sh
+tools/mh_audio_export /path/to/Crash-Twinsanity.iso 7 candidate-16k.wav 128 16000
+```
+
+The game-specific layout and playback rate remain unresolved; see the listening feedback and next checks in [the asset investigation notes](docs/asset-investigation.md).
 
 The repository includes these utilities:
 
@@ -72,7 +78,7 @@ The repository includes these utilities:
 | `iso9660_inspect` | List ISO9660 directories or print a bounded hexadecimal file range. |
 | `bh_inspect` | Parse a `.BH` archive index and optionally check its ranges against the paired `.BD`. |
 | `mh_inspect` | Compare `.MH` records with candidate ranges in the paired `.MB`. |
-| `mh_audio_export` | Experimentally decode one type-1 `MUSIC.MH` range as stereo PSX ADPCM and write a WAV, reading directly from the ISO. |
+| `mh_audio_export` | Compare candidate chunk-interleaved stereo decodes of type-1 `MUSIC.MH` ranges, writing WAV directly from ISO data. |
 | `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, decode PSMT8 textures and mip levels, check model-item VIF decoding coverage and linked material/submodel count agreement, inspect material/rigid-model records, and scan VIF blocks. |
 | `texture_inspect` | Load one PSMT8 texture and its mip levels through an ISO's `.BH`/`.BD` archive without extracting the resource. |
 | `model_inspect` | Decode one model's bounded VIF position, UV/color, and strip records, report per-submodel vertex/triangle counts, and list all resolving material/texture pairs. |
