@@ -20,9 +20,9 @@ An experimental native reimplementation of *Crash Twinsanity* in Nim. The projec
 
 ## Current status
 
-The renderer is at the foundation stage: it opens an 800 × 600 window, draws a rotating colored cube, and supports basic camera translation. It does not yet load Crash Twinsanity levels, models, textures, or other game assets.
+The renderer opens an 800 × 600 window, draws a rotating colored cube, and supports basic camera translation. As an asset-pipeline milestone, it can also read one PSMT8 texture and its mip levels directly from a user-supplied ISO and display it on a preview quad. Level geometry, model materials, and full game rendering are not integrated yet.
 
-The research tools can inspect an ISO image directly. Current format work covers ISO9660 filesystems, `.BH`/`.BD` archive indexes, `.MH`/`.MB` tables, and `.RM2`/`.SM2` section, texture, material, model, rigid-model reference, and bounded VIF command records, including candidate position, UV/color, normal, emissive-byte, and triangle-strip data. In the Cavern samples, all parsed shader texture IDs and rigid-model material links resolve to sibling records. A Nim PSMT8 decoder converts all 75 Cavern textures and their mip levels into RGBA in memory; one decoded base texture has been visually reviewed. Displaying game assets in the renderer remains future work. Findings and open questions are tracked in [the asset investigation notes](docs/asset-investigation.md). Format labels taken from community tools are identified as their authors' classifications; observed facts and unresolved interpretations are kept separate.
+The research tools can inspect an ISO image directly. Current format work covers ISO9660 filesystems, `.BH`/`.BD` archive indexes, `.MH`/`.MB` tables, and `.RM2`/`.SM2` section, texture, material, model, rigid-model reference, and bounded VIF command records, including candidate position, UV/color, normal, emissive-byte, and triangle-strip data. In the Cavern samples, all parsed shader texture IDs and rigid-model material links resolve to sibling records. A Nim PSMT8 decoder converts all 75 Cavern textures and their mip levels into RGBA in memory, and the renderer can display a selected texture directly from the ISO. One decoded base texture has been visually reviewed. Findings and open questions are tracked in [the asset investigation notes](docs/asset-investigation.md). Format labels taken from community tools are identified as their authors' classifications; observed facts and unresolved interpretations are kept separate.
 
 ## Requirements
 
@@ -66,6 +66,14 @@ The repository includes these utilities:
 | `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, decode PSMT8 textures and mip levels in memory, inspect material/model/rigid-model records, and scan VIF blocks. |
 | `texture_inspect` | Load one PSMT8 texture and its mip levels through an ISO's `.BH`/`.BD` archive without extracting the resource. |
 | `elf_mips_refs` | Find direct MIPS immediate references to strings in a supplied ELF executable. |
+
+To preview a texture in the OpenGL window, run the main executable with an ISO path, a resource path inside `CRASH.BD`, and a decimal texture ID. For example:
+
+```sh
+main /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2" 3879915471
+```
+
+The preview reads the required ranges directly from the ISO and uploads the decoded base image and mip levels to OpenGL. It does not extract the resource to disk.
 
 The examples below use POSIX shell syntax. In PowerShell, prefix local tools with `.` (for example, `.\tools\rm2_inspect.exe`) and use the `.exe` suffix.
 
