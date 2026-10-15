@@ -351,7 +351,31 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
   echo "VIF streams with unsupported commands: ", vifUnsupported
   echo "VIF streams with truncated or misaligned command data: ", vifMalformed
 
-proc inspectRigidModels(sectionData: openArray[uint8], sectionLength: uint32) =
+proc collectSectionItemIds(sectionData: openArray[uint8],
+    sectionLength: uint32): HashSet[uint32] =
+  if sectionData.len < 12:
+    raise newException(IOError, "Model section is shorter than its header")
+
+  let itemCount = readU32LE(sectionData, 4)
+  let tableLength = 12'u64 + uint64(itemCount) * 12'u64
+  if tableLength > uint64(sectionData.len) or
+      tableLength > uint64(sectionLength):
+    raise newException(IOError, "Model item table extends beyond its section")
+
+  result = initHashSet[uint32]()
+  for itemIndex in 0 ..< int(itemCount):
+    let entryOffset = 12 + itemIndex * 12
+    let itemOffset = readU32LE(sectionData, entryOffset)
+    let itemLength = readU32LE(sectionData, entryOffset + 4)
+    let itemId = readU32LE(sectionData, entryOffset + 8)
+    let itemEnd = uint64(itemOffset) + uint64(itemLength)
+    if itemOffset < tableLength or itemEnd > uint64(sectionLength) or
+        itemEnd > uint64(sectionData.len):
+      raise newException(IOError, "Model item range extends beyond its section")
+    result.incl(itemId)
+
+proc inspectRigidModels(sectionData: openArray[uint8], sectionLength: uint32,
+    modelIds: HashSet[uint32]) =
   if sectionData.len < 12:
     raise newException(IOError, "Rigid-model section is shorter than its header")
 
@@ -361,6 +385,7 @@ proc inspectRigidModels(sectionData: openArray[uint8], sectionLength: uint32) =
     raise newException(IOError, "Rigid-model item table extends beyond its section")
 
   var totalMaterialLinks = 0'u64
+  var meshReferencesMatchingModels = 0'u64
   var uniqueMeshIds = initHashSet[uint32]()
   var recordsWithTrailingBytes = 0'u64
   var headerValues = initHashSet[uint32]()
@@ -392,6 +417,8 @@ proc inspectRigidModels(sectionData: openArray[uint8], sectionLength: uint32) =
       cursor += 4
     let meshId = readU32LE(sectionData, cursor)
     cursor += 4
+    if modelIds.contains(meshId):
+      inc meshReferencesMatchingModels
 
     totalMaterialLinks += uint64(materialCount)
     uniqueMeshIds.incl(meshId)
@@ -407,6 +434,8 @@ proc inspectRigidModels(sectionData: openArray[uint8], sectionLength: uint32) =
   echo "Rigid-model items: ", sectionCount
   echo "Material links: ", totalMaterialLinks
   echo "Distinct referenced mesh IDs: ", uniqueMeshIds.len
+  echo "Mesh references matching sibling model IDs: ",
+    meshReferencesMatchingModels, " / ", sectionCount
   echo "Header values: ", headerValues
   echo "Records with trailing bytes: ", recordsWithTrailingBytes
 
@@ -471,7 +500,15 @@ proc inspectIsoResource(imagePath, requestedPath: string, nestedIndex,
       if modelSection.id == 2:
         inspectModelItems(modelData, modelSection.byteLength)
       elif modelSection.id in [3'u32, 6'u32]:
-        inspectRigidModels(modelData, modelSection.byteLength)
+        var modelIds = initHashSet[uint32]()
+        for sibling in nestedSections:
+          if sibling.id == 2:
+            let siblingOffset = sectionOffset + int64(sibling.offset)
+            let siblingData = image.readSlice(dataFile, siblingOffset,
+              int(sibling.byteLength))
+            modelIds = collectSectionItemIds(siblingData, sibling.byteLength)
+            break
+        inspectRigidModels(modelData, modelSection.byteLength, modelIds)
       else:
         echo "No specialized item parser for nested section ID ",
           modelSection.id
