@@ -22,7 +22,7 @@ type Camera* = object
   yaw*: float32
   pitch*: float32
 
-const CameraMoveSpeed = 2.5'f32
+const CameraMoveSpeed = 12.0'f32
 
 proc initCamera*(): Camera =
   result.position = Vec3(x: 0.0'f32, y: 0.0'f32, z: 3.0'f32)
