@@ -20,9 +20,9 @@ An experimental native reimplementation of *Crash Twinsanity* in Nim. The projec
 
 ## Current status
 
-The renderer opens an 800 × 600 window, draws a rotating colored cube, and supports basic camera translation. It can also read a PSMT8 texture and its mip levels directly from a user-supplied ISO, then preview either that texture or a selected model item on a rotating textured mesh. Full level geometry, material selection, and game rendering are not integrated yet.
+The renderer opens an 800 × 600 window, draws a rotating colored cube, and supports basic camera translation. It can also read a PSMT8 texture and its mip levels directly from a user-supplied ISO, then preview either that texture or a selected model item on a rotating textured mesh. Full level geometry, game-accurate material assignment and shader behavior, and game rendering are not integrated yet.
 
-The research tools can inspect an ISO image directly. Current format work covers ISO9660 filesystems, `.BH`/`.BD` archive indexes, `.MH`/`.MB` tables, and `.RM2`/`.SM2` sections, texture and material links, bounded VIF commands, and decoded model positions, UV/color attributes, and candidate triangle strips. In the Cavern samples, all parsed shader texture IDs and rigid-model material links resolve to sibling records. A Nim PSMT8 decoder converts all 75 Cavern textures and their mip levels into RGBA in memory, and the renderer can preview selected textures and model items directly from the ISO. The model inspector now lists every resolving material/texture pair for an item; the model preview still displays the first pair because per-submesh material assignment has not been established. One decoded base texture has been visually reviewed. Findings and open questions are tracked in [the asset investigation notes](docs/asset-investigation.md). Format labels taken from community tools are identified as their authors' classifications; observed facts and unresolved interpretations are kept separate.
+The research tools can inspect an ISO image directly. Current format work covers ISO9660 filesystems, `.BH`/`.BD` archive indexes, `.MH`/`.MB` tables, and `.RM2`/`.SM2` sections, texture and material links, bounded VIF commands, and decoded model positions, UV/color attributes, and candidate triangle strips. In the Cavern samples, all parsed shader texture IDs and rigid-model material links resolve to sibling records. A Nim PSMT8 decoder converts all 75 Cavern textures and their mip levels into RGBA in memory, and the renderer can preview selected textures and model items directly from the ISO. The model inspector lists every resolving material/texture pair for an item. The default model preview uses the first pair; an explicitly experimental mode applies material links to submodels in list order when their counts match, so that hypothesis can be visually checked. One decoded base texture has been visually reviewed. Findings and open questions are tracked in [the asset investigation notes](docs/asset-investigation.md). Format labels taken from community tools are identified as their authors' classifications; observed facts and unresolved interpretations are kept separate.
 
 ## Requirements
 
@@ -81,6 +81,14 @@ To preview a model item, pass `--model`, the ISO path, resource path, and model 
 ```sh
 main --model /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2" 4263539267
 ```
+
+For models where the number of resolved material links matches the number of submodels, the renderer can try assigning those links to submodels in list order. This is an unverified format hypothesis and is enabled only by the explicit flag:
+
+```sh
+main --model /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2" 4022622118 --candidate-material-order
+```
+
+The app prints each candidate pairing as it loads it. This preview mode is intended to help inspect the hypothesis; it does not establish that the game uses the same order.
 
 The current VIF reader handles the observed Cavern position and UV/color UNPACK streams and expands their candidate strip markers into triangles. It does not yet resolve the PS2's full VU memory/TOPS behavior or reproduce all material shader settings.
 
