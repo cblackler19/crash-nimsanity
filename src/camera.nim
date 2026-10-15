@@ -19,6 +19,8 @@ import math3d
 
 type Camera* = object
   position*: Vec3
+  yaw*: float32
+  pitch*: float32
 
 const CameraMoveSpeed = 2.5'f32
 
@@ -36,6 +38,14 @@ proc moveCamera*(camera: var Camera, direction: Vec3, deltaTime: float32) =
   camera.position.y += direction.y * distance
   camera.position.z += direction.z * distance
 
+proc rotateCamera*(camera: var Camera, yawDelta, pitchDelta: float32) =
+  camera.yaw += yawDelta
+  let pitchLimit = PI.float32 * 0.5'f32 - 0.05'f32
+  camera.pitch = max(-pitchLimit, min(pitchLimit, camera.pitch + pitchDelta))
+
 proc viewMatrix*(camera: Camera): Mat4 =
-  # With no camera rotation yet, the view transform is the inverse of its position.
-  translationMatrix(-camera.position.x, -camera.position.y, -camera.position.z)
+  let orientation = multiply(rotationMatrixX(-camera.pitch),
+    rotationMatrixY(-camera.yaw))
+  let translation = translationMatrix(-camera.position.x,
+    -camera.position.y, -camera.position.z)
+  multiply(orientation, translation)
