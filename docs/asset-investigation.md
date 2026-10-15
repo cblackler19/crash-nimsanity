@@ -47,9 +47,13 @@ The read-only Nim utility [`bh_inspect.nim`](../tools/bh_inspect.nim) parses thi
 
 The archive index contains 135 `.RM2` resources and 134 `.SM2` resources. Matching the paths by directory and base name gives 134 pairs; `Startup\Default.rm2` is the unmatched `.RM2` entry. The MIT-licensed Twinsanity Editor describes an RM/SM pair as a complete level chunk, providing a useful lead for inspecting these resources.
 
-The editor's `TwinsFile.cs` describes a 12-byte file header followed by a count of 12-byte section records containing offset, size, and ID, then section payloads. Three local ISO samples agree: `Levels\Earth\Cavern\cavent.rm2` and `.sm2`, and `Startup\Default.rm2`, each begin with word `0x00010001`; their section counts are 12, 7, and 12. For all three, the header's content-size word equals file length minus the header and section table, and the section ranges are contiguous from the end of the table through EOF. Section ID meanings remain unverified.
+The editor's `TwinsFile.cs` describes a 12-byte file header followed by a count of 12-byte section records containing offset, size, and ID, then section payloads. Three local ISO samples agree: `Levels\Earth\Cavern\cavent.rm2` and `.sm2`, and `Startup\Default.rm2`, each begin with word `0x00010001`; their section counts are 12, 7, and 12. For all three, the header's content-size word equals file length minus the header and section table, and the section ranges are contiguous from the end of the table through EOF. The section directory structure is corroborated; payload meanings still need direct validation.
 
 The read-only Nim utility [`rm2_inspect.nim`](../tools/rm2_inspect.nim) locates an RM2 or SM2 path in the on-ISO `.BH` catalog, reads its header and section table directly from the `.BD` extent, and reports bounded section ranges. It does not extract resource payloads.
+
+The editor maps RM2 section ID 11 and SM2 section ID 6 to graphics sections. The nested sections in both `cavent` graphics samples use the same `0x00010001` header and contain IDs 0 through 8. `TwinsSection.cs` maps those child IDs to texture, material, model, rigid model, skin, blend skin, mesh, LOD model, and skydome records. In the local samples, child ID 2 is 2,000,804 bytes in RM2 and 424,404 bytes in SM2; child ID 0 is 461,132 bytes in RM2 and 351,516 bytes in SM2. These names are the editor's classifications; the payload layouts and render semantics still need direct inspection.
+
+`rm2_inspect` accepts an optional outer section index to inspect that section's nested table, for example `tools/rm2_inspect.exe "gamefiles/Crash Twinsanity (v1.00).iso" Levels\Earth\Cavern\cavent.rm2 0`. This still reads only the selected resource headers and tables from the ISO.
 
 The local game executable contains strings including `.BH`, `.BD`, `%s.mb`, `Crash6\Crash`, `Crash6\Music`, `STREAM.IRX`, `CDVDSTM.IRX`, and `streaming options`.
 
@@ -64,12 +68,13 @@ These call-site observations are consistent with the `.BH` index and `.BD` data 
 ## Next checks
 
 - Inspect the `MSVp` header and music type-1 payload structure further, keeping the observed range associations separate from field semantics.
-- Inspect section IDs 10 and 11 in paired RM2/SM2 files to identify which sections contain the renderable level geometry.
+- Inspect the model and mesh payloads in the RM2/SM2 graphics sections and verify their vertex and index layouts against the actual bytes.
 - Trace how the paired-name object and registry result are consumed after lookup, and determine whether that path reaches file access.
 
 ## Community references and licensing
 
 - Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/BDArchive.cs`. The repository is MIT-licensed. Its archive reader/writer is used here as an attributed format cross-check only; no source code was copied or adapted. If MIT-licensed code is reused from this project later, retain the MIT copyright and permission notice for that code when distributing the ISC-licensed project.
 - Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/TwinsFile.cs`. Its RM/SM pair and section-table descriptions guided the next inspection target; the header and range findings above were checked independently against our ISO. No source code was copied or adapted.
+- Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/TwinsSection.cs`. Its section-ID labels are recorded as editor classifications and used as research leads; no source code was copied or adapted.
 - Knuxfan24, [KnuxLib](https://github.com/Knuxfan24/KnuxLib). Its MIT-licensed format list independently records `.BD`/`.BH` as a Crash Twinsanity archive pair. It is a possible comparison source for later parser work; no code was used here.
 - Smartkin, [twinsanity-reversed](https://github.com/Smartkin/twinsanity-reversed), is a PAL executable decompilation project with relevant reverse-engineering material. Its repository currently lists no license file, so its code is not being incorporated into this ISC project.

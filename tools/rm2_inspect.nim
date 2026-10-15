@@ -70,7 +70,7 @@ proc findArchiveEntry(indexData: openArray[uint8], requestedPath: string): Archi
 
   raise newException(IOError, "Path not found in CRASH.BH: " & requestedPath)
 
-proc inspectResource(resourceData: openArray[uint8], resourceLength: uint32) =
+proc inspectResource(resourceData: openArray[uint8], resourceLength: uint32): seq[SectionEntry] =
   if resourceLength < 12 or resourceData.len < 12:
     raise newException(IOError, "RM2/SM2 resource is shorter than its header")
 
@@ -88,10 +88,9 @@ proc inspectResource(resourceData: openArray[uint8], resourceLength: uint32) =
   echo "Sections: ", sectionCount
   echo "Content bytes: ", contentLength
 
-  var sections: seq[SectionEntry]
   for index in 0 ..< int(sectionCount):
     let offset = 12 + index * 12
-    sections.add(SectionEntry(
+    result.add(SectionEntry(
       offset: readU32LE(resourceData, offset),
       byteLength: readU32LE(resourceData, offset + 4),
       id: readU32LE(resourceData, offset + 8)
@@ -99,7 +98,7 @@ proc inspectResource(resourceData: openArray[uint8], resourceLength: uint32) =
 
   var rangesAreContiguous = true
   var expectedOffset = headerLength
-  for index, section in sections:
+  for index, section in result:
     let rangeEnd = uint64(section.offset) + uint64(section.byteLength)
     if uint64(section.offset) != expectedOffset:
       rangesAreContiguous = false
@@ -117,7 +116,21 @@ proc inspectResource(resourceData: openArray[uint8], resourceLength: uint32) =
   if rangesAreContiguous and expectedOffset == uint64(resourceLength):
     echo "Section ranges are contiguous and cover the resource payload."
 
-proc inspectIsoResource(imagePath, requestedPath: string) =
+proc readSectionTable(image: IsoImage, dataFile: IsoEntry, offset: int64,
+    sectionLength: uint32): seq[uint8] =
+  let fixedLength = int(min(sectionLength, 12'u32))
+  let fixedHeader = image.readSlice(dataFile, offset, fixedLength)
+  if fixedHeader.len < 12:
+    raise newException(IOError, "Section is shorter than its header")
+
+  let sectionCount = readU32LE(fixedHeader, 4)
+  let tableLength = 12'u64 + uint64(sectionCount) * 12'u64
+  if tableLength > uint64(sectionLength) or tableLength > uint64(high(int)):
+    raise newException(IOError, "Section table extends beyond its section")
+
+  image.readSlice(dataFile, offset, int(tableLength))
+
+proc inspectIsoResource(imagePath, requestedPath: string, nestedIndex: int) =
   let image = openIso(imagePath)
   defer: image.close()
 
@@ -130,29 +143,40 @@ proc inspectIsoResource(imagePath, requestedPath: string) =
     raise newException(IOError, "Archive entry extends beyond CRASH.BD")
 
   let resourceOffset = int64(archiveEntry.dataOffset)
-  let fixedHeaderLength = int(min(archiveEntry.dataLength, 12'u32))
-  let fixedHeader = image.readSlice(dataFile, resourceOffset, fixedHeaderLength)
-  if fixedHeader.len < 12:
-    raise newException(IOError, "RM2/SM2 resource is shorter than its header")
-
-  let sectionCount = readU32LE(fixedHeader, 4)
-  let headerLength = 12'u64 + uint64(sectionCount) * 12'u64
-  if headerLength > uint64(archiveEntry.dataLength) or
-      headerLength > uint64(high(int)):
-    raise newException(IOError, "Section table extends beyond the resource")
-  let resourceHeader = image.readSlice(dataFile, resourceOffset, int(headerLength))
+  let resourceHeader = readSectionTable(
+    image, dataFile, resourceOffset, archiveEntry.dataLength
+  )
 
   echo "ISO volume: ", image.volumeName
   echo "Resource: ", archiveEntry.path
   echo "Bytes: ", archiveEntry.dataLength
-  inspectResource(resourceHeader, archiveEntry.dataLength)
+  let sections = inspectResource(resourceHeader, archiveEntry.dataLength)
+
+  if nestedIndex >= 0:
+    if nestedIndex >= sections.len:
+      raise newException(IOError, "Outer section index is out of range")
+    let section = sections[nestedIndex]
+    let sectionOffset = resourceOffset + int64(section.offset)
+    let nestedHeader = readSectionTable(
+      image, dataFile, sectionOffset, section.byteLength
+    )
+    echo "Nested table for outer section index ", nestedIndex,
+      " (id=", section.id, ", bytes=", section.byteLength, ")"
+    discard inspectResource(nestedHeader, section.byteLength)
 
 proc main() =
-  if paramCount() != 2:
-    quit("Usage: rm2_inspect <image.iso> <path-inside-CRASH.BD>", 1)
+  if paramCount() notin [2, 3]:
+    quit("Usage: rm2_inspect <image.iso> <path-inside-CRASH.BD> [outer-section-index]", 1)
+
+  var nestedIndex = -1
+  if paramCount() == 3:
+    try:
+      nestedIndex = parseInt(paramStr(3))
+    except ValueError:
+      quit("Outer section index must be an integer", 1)
 
   try:
-    inspectIsoResource(paramStr(1), paramStr(2))
+    inspectIsoResource(paramStr(1), paramStr(2), nestedIndex)
   except IOError as error:
     quit(error.msg, 1)
 
