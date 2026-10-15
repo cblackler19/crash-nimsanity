@@ -68,10 +68,12 @@ void main() {
 type PreviewAssets = object
   showTexture: bool
   showModel: bool
+  useCandidateMaterialOrder: bool
   modelId: uint32
   materialId: uint32
   textureId: uint32
   texture: DecodedTexture
+  candidateTextures: seq[DecodedTexture]
   model: DecodedModel
 
 proc parseId(argument, label: string): uint32 =
@@ -94,13 +96,37 @@ proc loadPreviewAssets(): PreviewAssets =
     except CatchableError as error:
       quit("Could not load ISO texture: " & error.msg, 1)
     return
-  if paramCount() notin [4, 5] or paramStr(1) != "--model":
+  let useCandidateMaterialOrder = paramCount() == 5 and
+    paramStr(5) == "--candidate-material-order"
+  if (paramCount() notin [4, 5] or
+      (paramCount() == 5 and not useCandidateMaterialOrder)) or
+      paramStr(1) != "--model":
     quit("Usage: main [image.iso resource-path texture-id] | " &
-      "main --model image.iso resource-path model-id [texture-id]", 1)
+      "main --model image.iso resource-path model-id [texture-id | " &
+      "--candidate-material-order]", 1)
 
   let modelId = parseId(paramStr(4), "Model ID")
   try:
     result.model = loadModelFromIso(paramStr(2), paramStr(3), modelId)
+    if useCandidateMaterialOrder:
+      # The format reference does not confirm parallel list ordering; keep this
+      # path opt-in so the candidate mapping can be inspected without assuming it.
+      let links = findTexturesForModelFromIso(paramStr(2), paramStr(3), modelId)
+      if links.len != result.model.submodelCount:
+        raise newException(ValueError,
+          "Experimental material-order preview requires one resolved " &
+          "texture link per submodel")
+      for submodelIndex, link in links:
+        result.candidateTextures.add(loadTextureFromIso(paramStr(2),
+          paramStr(3), link.textureId))
+        echo "Experimental candidate: submodel ", submodelIndex,
+          " -> material ", link.materialId, " -> texture ", link.textureId
+      result.useCandidateMaterialOrder = true
+      result.modelId = modelId
+      result.showModel = true
+      result.showTexture = true
+      return
+
     var textureId: uint32
     if paramCount() == 5:
       textureId = parseId(paramStr(5), "Texture ID")
@@ -185,7 +211,9 @@ proc main() =
   glfwWindowHint(GLFWOpenglProfile, GLFW_OPENGL_CORE_PROFILE)
   glfwWindowHint(GLFWOpenglForwardCompat, GLFW_TRUE)
 
-  let windowTitle = if preview.showModel:
+  let windowTitle = if preview.showModel and preview.useCandidateMaterialOrder:
+    "crash-nimsanity - candidate material preview"
+  elif preview.showModel:
     "crash-nimsanity - ISO model preview"
   elif preview.showTexture:
     "crash-nimsanity - ISO texture preview"
@@ -237,7 +265,11 @@ proc main() =
   else:
     previewMesh = createCubeMesh()
   var previewTexture: Texture2D
-  if preview.showTexture:
+  var candidateTextures: seq[Texture2D]
+  if preview.useCandidateMaterialOrder:
+    for decoded in preview.candidateTextures:
+      candidateTextures.add(uploadTexture2D(decoded))
+  elif preview.showTexture:
     previewTexture = uploadTexture2D(preview.texture)
   var camera = initCamera()
 
@@ -296,13 +328,25 @@ proc main() =
     glUniform1i(useTextureLocation, GLint(if preview.showTexture: 1 else: 0))
     if preview.showTexture:
       glUniform1i(textureLocation, 0)
-      previewTexture.bindTexture()
-    previewMesh.draw()
+      if preview.useCandidateMaterialOrder:
+        for submodelIndex, texture in candidateTextures:
+          texture.bindTexture()
+          previewMesh.drawRange(
+            preview.model.submodelTriangleVertexOffsets[submodelIndex],
+            preview.model.submodelTriangleCounts[submodelIndex] * 3
+          )
+      else:
+        previewTexture.bindTexture()
+        previewMesh.draw()
+    else:
+      previewMesh.draw()
 
     window.swapBuffers()
 
   previewMesh.destroy()
   previewTexture.destroy()
+  for texture in candidateTextures.mitems:
+    texture.destroy()
   glDeleteProgram(shaderProgram)
   window.destroyWindow()
   glfwTerminate()
