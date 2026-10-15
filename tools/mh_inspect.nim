@@ -1,0 +1,159 @@
+# ISC License
+#
+# Copyright (c) 2026 Caleb Blackler
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+# REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+# AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+# INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+# LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+# OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+# PERFORMANCE OF THIS SOFTWARE.
+#
+import std/[os, tables, strutils]
+
+import iso9660
+
+const
+  TableHeaderSize = 8
+  RecordSize = 20
+
+proc readU32LE(data: openArray[uint8], offset: int): uint32 =
+  uint32(data[offset]) or
+    (uint32(data[offset + 1]) shl 8) or
+    (uint32(data[offset + 2]) shl 16) or
+    (uint32(data[offset + 3]) shl 24)
+
+proc readU32BE(data: openArray[uint8], offset: int): uint32 =
+  (uint32(data[offset]) shl 24) or
+    (uint32(data[offset + 1]) shl 16) or
+    (uint32(data[offset + 2]) shl 8) or
+    uint32(data[offset + 3])
+
+proc hexBytes(data: openArray[uint8]): string =
+  for index, value in data:
+    if index > 0:
+      result.add(' ')
+    result.add(toHex(int(value), 2))
+
+proc inspectTables(imagePath, headerPath, dataPath: string) =
+  let image = openIso(imagePath)
+  defer: image.close()
+
+  let headerEntry = image.findEntry(headerPath)
+  let dataEntry = image.findEntry(dataPath)
+  if headerEntry.isDirectory or dataEntry.isDirectory:
+    raise newException(IOError, "MH and MB paths must refer to files")
+
+  let headerData = image.readSlice(headerEntry, 0, int(headerEntry.byteLength))
+  if headerData.len < TableHeaderSize:
+    raise newException(IOError, "MH file is shorter than its table header")
+
+  let declaredCount = readU32LE(headerData, 0)
+  if uint64(declaredCount) > uint64((headerData.len - TableHeaderSize) div RecordSize):
+    raise newException(IOError, "MH record count exceeds the table data")
+
+  let actualCount = (headerData.len - TableHeaderSize) div RecordSize
+  echo "ISO volume: ", image.volumeName
+  echo "MH path: ", headerPath, " (", headerEntry.byteLength, " bytes)"
+  echo "MB path: ", dataPath, " (", dataEntry.byteLength, " bytes)"
+  echo "Header words: ", declaredCount, ", ", readU32LE(headerData, 4)
+  echo "Records described by first word: ", declaredCount
+  echo "20-byte records available after header: ", actualCount
+  if actualCount * RecordSize + TableHeaderSize != headerData.len:
+    echo "Trailing bytes after complete records: ",
+      headerData.len - (actualCount * RecordSize + TableHeaderSize)
+
+  var typeCounts = initTable[uint32, int]()
+  var inBoundsCount = 0
+  var alignedTypeOneCount = 0
+  var alignedTypeOneOffsetCount = 0
+  var typeOneCount = 0
+  var typeZeroCount = 0
+  var typeZeroMagicCount = 0
+  var typeZeroLengthCheckCount = 0
+  var typeZeroWordCheckCount = 0
+  var typeZeroSamples = 0
+  var sampleCount = 0
+
+  for recordIndex in 0 ..< int(declaredCount):
+    let base = TableHeaderSize + recordIndex * RecordSize
+    let kind = readU32LE(headerData, base)
+    let byteLength = readU32LE(headerData, base + 4)
+    let byteOffset = readU32LE(headerData, base + 8)
+    typeCounts.mgetOrPut(kind, 0).inc
+
+    let rangeEnd = uint64(byteOffset) + uint64(byteLength)
+    if rangeEnd > uint64(dataEntry.byteLength):
+      echo "Out-of-bounds record ", recordIndex, ": offset=", byteOffset,
+        " bytes=", byteLength
+      continue
+    inc inBoundsCount
+
+    if kind == 1:
+      inc typeOneCount
+      if byteLength mod 16 == 0:
+        inc alignedTypeOneCount
+      if byteOffset mod 16 == 0:
+        inc alignedTypeOneOffsetCount
+      if sampleCount < 4:
+        let sample = image.readSlice(dataEntry, int64(byteOffset),
+          min(32, int(byteLength)))
+        echo "Type-1 record ", recordIndex, ": offset=", byteOffset,
+          " bytes=", byteLength, " offset-mod-16=", byteOffset mod 16,
+          " length-mod-16=", byteLength mod 16,
+          " first-bytes=", hexBytes(sample)
+        inc sampleCount
+    elif kind == 0:
+      inc typeZeroCount
+      if byteLength >= 20:
+        let prefix = image.readSlice(dataEntry, int64(byteOffset), 20)
+        if prefix[0 .. 3] == @[uint8('M'), uint8('S'), uint8('V'), uint8('p')]:
+          inc typeZeroMagicCount
+          let fieldAtFour = readU32BE(prefix, 4)
+          let fieldAtTwelve = readU32BE(prefix, 12)
+          let fieldAtSixteen = readU32BE(prefix, 16)
+          if uint64(fieldAtTwelve) + 48 == uint64(byteLength):
+            inc typeZeroLengthCheckCount
+          if fieldAtSixteen == readU32LE(headerData, base + 12):
+            inc typeZeroWordCheckCount
+          if typeZeroSamples < 4:
+            echo "Type-0 MSVp record ", recordIndex, ": offset=", byteOffset,
+              " bytes=", byteLength, " BE32@+4=", fieldAtFour,
+              " BE32@+12=", fieldAtTwelve, " BE32@+16=", fieldAtSixteen
+            inc typeZeroSamples
+        else:
+          echo "Type-0 record ", recordIndex,
+            " does not begin with MSVp: ", hexBytes(prefix[0 .. 3])
+
+  echo "Type counts:"
+  for kind, count in typeCounts:
+    echo "  ", kind, ": ", count
+  echo "Ranges within MB bounds: ", inBoundsCount, " / ", declaredCount
+  echo "Type-0 ranges beginning MSVp: ", typeZeroMagicCount, " / ", typeZeroCount
+  echo "Type-0 MSVp ranges where BE32@+12 + 48 equals MH length: ",
+    typeZeroLengthCheckCount, " / ", typeZeroMagicCount
+  echo "Type-0 MSVp ranges where BE32@+16 equals MH word 3: ",
+    typeZeroWordCheckCount, " / ", typeZeroMagicCount
+  echo "Type-1 lengths divisible by 16: ", alignedTypeOneCount,
+    " / ", typeOneCount
+  echo "Type-1 offsets divisible by 16: ", alignedTypeOneOffsetCount,
+    " / ", typeOneCount
+
+proc main() =
+  if paramCount() notin [1, 3]:
+    quit("Usage: mh_inspect <image.iso> [mh-path mb-path]", 1)
+
+  let headerPath = if paramCount() == 3: paramStr(2) else: "CRASH6/MUSIC.MH"
+  let dataPath = if paramCount() == 3: paramStr(3) else: "CRASH6/MUSIC.MB"
+  try:
+    inspectTables(paramStr(1), headerPath, dataPath)
+  except IOError as error:
+    quit(error.msg, 1)
+
+when isMainModule:
+  main()
