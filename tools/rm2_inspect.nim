@@ -728,7 +728,7 @@ proc collectSectionItemIds(sectionData: openArray[uint8],
     result.incl(itemId)
 
 proc inspectRigidModels(sectionData: openArray[uint8], sectionLength: uint32,
-    modelIds: HashSet[uint32]) =
+    modelIds, materialIds: HashSet[uint32]) =
   if sectionData.len < 12:
     raise newException(IOError, "Rigid-model section is shorter than its header")
 
@@ -738,6 +738,7 @@ proc inspectRigidModels(sectionData: openArray[uint8], sectionLength: uint32,
     raise newException(IOError, "Rigid-model item table extends beyond its section")
 
   var totalMaterialLinks = 0'u64
+  var materialLinksMatchingIds = 0'u64
   var meshReferencesMatchingModels = 0'u64
   var uniqueMeshIds = initHashSet[uint32]()
   var recordsWithTrailingBytes = 0'u64
@@ -766,7 +767,10 @@ proc inspectRigidModels(sectionData: openArray[uint8], sectionLength: uint32,
     var cursor = itemStart + 8
     var materials: seq[uint32]
     for _ in 0 ..< int(materialCount):
-      materials.add(readU32LE(sectionData, cursor))
+      let materialId = readU32LE(sectionData, cursor)
+      materials.add(materialId)
+      if materialIds.contains(materialId):
+        inc materialLinksMatchingIds
       cursor += 4
     let meshId = readU32LE(sectionData, cursor)
     cursor += 4
@@ -786,6 +790,8 @@ proc inspectRigidModels(sectionData: openArray[uint8], sectionLength: uint32,
 
   echo "Rigid-model items: ", sectionCount
   echo "Material links: ", totalMaterialLinks
+  echo "Material links matching sibling material IDs: ",
+    materialLinksMatchingIds, " / ", totalMaterialLinks
   echo "Distinct referenced mesh IDs: ", uniqueMeshIds.len
   echo "Mesh references matching sibling model IDs: ",
     meshReferencesMatchingModels, " / ", sectionCount
@@ -877,6 +883,93 @@ proc inspectTextureItems(sectionData: openArray[uint8], sectionLength: uint32) =
   echo "Sample texture dimensions (itemId:width x height): ",
     dimensionSamples.join(", ")
 
+proc inspectMaterialItems(sectionData: openArray[uint8], sectionLength: uint32,
+    textureIds: HashSet[uint32]): HashSet[uint32] =
+  if sectionData.len < 12:
+    raise newException(IOError, "Material section is shorter than its header")
+
+  let itemCount = readU32LE(sectionData, 4)
+  let tableLength = 12'u64 + uint64(itemCount) * 12'u64
+  if tableLength > uint64(sectionData.len) or
+      tableLength > uint64(sectionLength):
+    raise newException(IOError, "Material item table extends beyond its section")
+
+  result = initHashSet[uint32]()
+  var shaderTypeCounts: array[256, uint64]
+  var shaderCountTotal = 0'u64
+  var textureReferencesMatchingIds = 0'u64
+  var materialsEndingAtBoundary = 0'u64
+
+  for itemIndex in 0 ..< int(itemCount):
+    let entryOffset = 12 + itemIndex * 12
+    let itemOffset = readU32LE(sectionData, entryOffset)
+    let itemLength = readU32LE(sectionData, entryOffset + 4)
+    let itemId = readU32LE(sectionData, entryOffset + 8)
+    let itemEnd = uint64(itemOffset) + uint64(itemLength)
+    if itemOffset < tableLength or itemEnd > uint64(sectionLength) or
+        itemEnd > uint64(sectionData.len):
+      raise newException(IOError, "Material item range extends beyond its section")
+    if itemLength < 20:
+      raise newException(IOError, "Material item is shorter than its fixed fields")
+
+    let itemStart = int(itemOffset)
+    let nameLength = readU32LE(sectionData, itemStart + 12)
+    let nameStart = itemStart + 16
+    if uint64(nameLength) + 20'u64 > uint64(itemLength):
+      raise newException(IOError, "Material name extends beyond its item")
+    let shaderCountOffset = nameStart + int(nameLength)
+    let shaderCount = readU32LE(sectionData, shaderCountOffset)
+    var cursor = shaderCountOffset + 4
+    let itemLimit = int(itemEnd)
+    var name = newString(int(nameLength))
+    for nameIndex in 0 ..< int(nameLength):
+      name[nameIndex] = char(sectionData[nameStart + nameIndex])
+
+    if uint64(shaderCount) > uint64((itemLimit - cursor) div 94):
+      raise newException(IOError, "Material shader count exceeds item bounds")
+
+    for _ in 0 ..< int(shaderCount):
+      if cursor > itemLimit - 4:
+        raise newException(IOError, "Material shader header extends beyond item")
+      let shaderType = readU32LE(sectionData, cursor)
+      # These parameter sizes follow the reference reader's type-specific fields.
+      let parameterBytes = case shaderType
+        of 23'u32: 12
+        of 26'u32: 20
+        of 16'u32, 17'u32: 4
+        else: 0
+      let shaderLength = 94 + parameterBytes
+      if shaderLength > itemLimit - cursor:
+        raise newException(IOError, "Material shader record extends beyond item")
+
+      let textureId = readU32LE(sectionData, cursor + shaderLength - 8)
+      shaderTypeCounts[int(shaderType and 0xFF)] += 1
+      inc shaderCountTotal
+      if textureIds.contains(textureId):
+        inc textureReferencesMatchingIds
+      cursor += shaderLength
+
+    if cursor == itemLimit:
+      inc materialsEndingAtBoundary
+    result.incl(itemId)
+    if itemIndex < 8:
+      echo "Material item id=", itemId, " bytes=", itemLength,
+        " header=0x", toHex(readU32LE(sectionData, itemStart + 4), 8),
+        toHex(readU32LE(sectionData, itemStart), 8), " name=\"", name,
+        "\" shaders=", shaderCount, " trailing bytes=", itemLimit - cursor
+
+  echo "Material items: ", itemCount
+  echo "Distinct material IDs: ", result.len
+  echo "Shader records: ", shaderCountTotal
+  echo "Shader texture references matching sibling texture IDs: ",
+    textureReferencesMatchingIds, " / ", shaderCountTotal
+  echo "Materials ending at declared item boundaries: ",
+    materialsEndingAtBoundary, " / ", itemCount
+  echo "Shader type counts by low byte:"
+  for shaderType, count in shaderTypeCounts:
+    if count > 0:
+      echo "  ", shaderType, ": ", count
+
 proc readSectionTable(image: IsoImage, dataFile: IsoEntry, offset: int64,
     sectionLength: uint32): seq[uint8] =
   let fixedLength = int(min(sectionLength, 12'u32))
@@ -939,16 +1032,33 @@ proc inspectIsoResource(imagePath, requestedPath: string, nestedIndex,
         inspectModelItems(modelData, modelSection.byteLength)
       elif modelSection.id in [3'u32, 6'u32]:
         var modelIds = initHashSet[uint32]()
+        var materialIds = initHashSet[uint32]()
         for sibling in nestedSections:
-          if sibling.id == 2:
+          if sibling.id in [1'u32, 2'u32]:
             let siblingOffset = sectionOffset + int64(sibling.offset)
             let siblingData = image.readSlice(dataFile, siblingOffset,
               int(sibling.byteLength))
-            modelIds = collectSectionItemIds(siblingData, sibling.byteLength)
-            break
-        inspectRigidModels(modelData, modelSection.byteLength, modelIds)
+            let siblingIds = collectSectionItemIds(siblingData,
+              sibling.byteLength)
+            if sibling.id == 1:
+              materialIds = siblingIds
+            else:
+              modelIds = siblingIds
+        inspectRigidModels(modelData, modelSection.byteLength, modelIds,
+          materialIds)
       elif modelSection.id == 0:
         inspectTextureItems(modelData, modelSection.byteLength)
+      elif modelSection.id == 1:
+        var textureIds = initHashSet[uint32]()
+        for sibling in nestedSections:
+          if sibling.id == 0:
+            let siblingOffset = sectionOffset + int64(sibling.offset)
+            let siblingData = image.readSlice(dataFile, siblingOffset,
+              int(sibling.byteLength))
+            textureIds = collectSectionItemIds(siblingData, sibling.byteLength)
+            break
+        discard inspectMaterialItems(modelData, modelSection.byteLength,
+          textureIds)
       else:
         echo "No specialized item parser for nested section ID ",
           modelSection.id
