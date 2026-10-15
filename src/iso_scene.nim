@@ -49,6 +49,7 @@ type
     materialPath*: string
     textureId*: uint32
     hasTexture*: bool
+    isStaticGeometry*: bool
     modelTransform*: Mat4
     model*: DecodedModel
     texture*: DecodedTexture
@@ -57,6 +58,7 @@ type
     instanceId*: uint32
     objectId*: uint16
     modelIndex*: int
+    chunkTransform*: Mat4
     position*: array[3, float32]
     rotations*: array[6, uint16]
 
@@ -497,7 +499,9 @@ proc loadPlacementModelsFromIso*(imagePath, resourcePath: string,
       raise newException(IOError, "Object-instance identity fields are truncated")
     let objectId = readU16LE(instanceData, cursor)
     let linkedOgis = codeTables.objectOgis.getOrDefault(uint32(objectId), @[])
-    var selectedModelIndex = -1
+    var hasLoadableModel = false
+    # Several OGI links can lead back to the same rigid model for one object.
+    var instanceModels = initHashSet[string]()
 
     for ogiId in linkedOgis:
       if ogiId == high(uint16):
@@ -517,50 +521,149 @@ proc loadPlacementModelsFromIso*(imagePath, resourcePath: string,
           archiveModels.modelPaths[geometryId]
         let modelKey = modelPath.toLowerAscii() & ":" & $geometryId & ":" &
           rigidLocation.resourcePath.toLowerAscii() & ":" & $rigidId
-        if modelKey in loadedModels:
-          selectedModelIndex = loadedModels[modelKey]
-          break
-        try:
-          let textureLink = findTextureForModelFromIso(imagePath,
-            rigidLocation.resourcePath, geometryId)
-          var sceneModel = SceneModel(
-            modelId: geometryId,
-            modelPath: modelPath,
-            materialPath: rigidLocation.resourcePath,
-            textureId: textureLink.textureId,
-            hasTexture: true,
-            model: loadModelFromIso(imagePath, modelPath, geometryId),
-            texture: loadTextureFromIso(imagePath,
-              rigidLocation.resourcePath, textureLink.textureId)
-          )
-          selectedModelIndex = result.models.len
-          result.models.add(sceneModel)
-          loadedModels[modelKey] = selectedModelIndex
-          echo "Placement model ", geometryId, " from ", modelPath,
-            " using texture ", textureLink.textureId, " in ",
-            rigidLocation.resourcePath
-          break
-        except CatchableError as error:
-          echo "Skipping model candidate ", geometryId, ": ", error.msg
-      if selectedModelIndex >= 0:
-        break
+        if modelKey in instanceModels:
+          continue
 
-    if selectedModelIndex < 0:
+        var modelIndex: int
+        if modelKey in loadedModels:
+          modelIndex = loadedModels[modelKey]
+        else:
+          try:
+            var sceneModel = SceneModel(
+              modelId: geometryId,
+              modelPath: modelPath,
+              materialPath: rigidLocation.resourcePath,
+              model: loadModelFromIso(imagePath, modelPath, geometryId)
+            )
+            try:
+              let textureLink = findTextureForModelFromIso(imagePath,
+                rigidLocation.resourcePath, geometryId)
+              sceneModel.textureId = textureLink.textureId
+              sceneModel.texture = loadTextureFromIso(imagePath,
+                rigidLocation.resourcePath, textureLink.textureId)
+              sceneModel.hasTexture = true
+            except CatchableError as error:
+              echo "Placement model ", geometryId,
+                " has no resolving texture; drawing decoded vertex colors: ",
+                error.msg
+
+            modelIndex = result.models.len
+            result.models.add(sceneModel)
+            loadedModels[modelKey] = modelIndex
+            if sceneModel.hasTexture:
+              echo "Placement model ", geometryId, " from ", modelPath,
+                " using texture ", sceneModel.textureId, " in ",
+                rigidLocation.resourcePath
+          except CatchableError as error:
+            echo "Skipping model candidate ", geometryId, ": ", error.msg
+            continue
+
+        instanceModels.incl(modelKey)
+        hasLoadableModel = true
+        result.placements.add(ScenePlacement(
+          instanceId: instanceId,
+          objectId: objectId,
+          modelIndex: modelIndex,
+          chunkTransform: identityMatrix(),
+          position: position,
+          rotations: rotations
+        ))
+
+    if not hasLoadableModel:
       echo "Placement record ", instanceId, " (object ", objectId,
         ") has no loadable model candidate"
-      continue
-
-    result.placements.add(ScenePlacement(
-      instanceId: instanceId,
-      objectId: objectId,
-      modelIndex: selectedModelIndex,
-      position: position,
-      rotations: rotations
-    ))
 
   if result.placements.len == 0:
     raise newException(IOError, "No loadable placed models found in this group")
 
+  for axis in 0 .. 2:
+    result.minimum[axis] = result.placements[0].position[axis]
+    result.maximum[axis] = result.placements[0].position[axis]
+  for placement in result.placements:
+    for axis in 0 .. 2:
+      result.minimum[axis] = min(result.minimum[axis], placement.position[axis])
+      result.maximum[axis] = max(result.maximum[axis], placement.position[axis])
+  for axis in 0 .. 2:
+    result.center[axis] = (result.minimum[axis] + result.maximum[axis]) * 0.5'f32
+
+proc loadPlacementGroupsFromIso(imagePath, resourcePath: string,
+    maxRecords: int): ScenePreview =
+  if maxRecords <= 0:
+    raise newException(ValueError, "Placement record limit must be positive")
+  if not resourcePath.toLowerAscii().endsWith(".rm2"):
+    raise newException(ValueError, "Placement groups require an RM2 resource")
+
+  let image = openIso(imagePath)
+  defer: image.close()
+  let indexFile = image.findEntry("CRASH6/CRASH.BH")
+  let dataFile = image.findEntry("CRASH6/CRASH.BD")
+  let indexData = image.readSlice(indexFile, 0, int(indexFile.byteLength))
+  let requested = resourcePath.replace('/', '\\').toLowerAscii()
+  var archiveCursor = 4
+  var resourceEntry: ArchiveEntry
+  var foundResource = false
+  while archiveCursor < indexData.len:
+    let entry = parseArchiveEntry(indexData, archiveCursor)
+    if entry.path.replace('/', '\\').toLowerAscii() == requested:
+      resourceEntry = entry
+      foundResource = true
+      break
+  if not foundResource:
+    raise newException(IOError, "Resource path was not found in CRASH.BH")
+  if uint64(resourceEntry.dataOffset) + uint64(resourceEntry.dataLength) >
+      uint64(dataFile.byteLength):
+    raise newException(IOError, "Resource range exceeds CRASH.BD")
+
+  let resourceOffset = int64(resourceEntry.dataOffset)
+  let rootSections = readSectionTable(image, dataFile, resourceOffset,
+    resourceEntry.dataLength)
+  var groups: seq[tuple[outerIndex, nestedIndex: int]]
+  for outerIndex, groupSection in rootSections:
+    if groupSection.id > 7 or groupSection.byteLength < 12:
+      continue
+    let groupOffset = resourceOffset + int64(groupSection.offset)
+    try:
+      let nestedSections = readSectionTable(image, dataFile, groupOffset,
+        groupSection.byteLength)
+      for nestedIndex, nestedSection in nestedSections:
+        if nestedSection.id != 6 or nestedSection.byteLength < 12:
+          continue
+        let instanceData = readSection(image, dataFile, groupOffset,
+          nestedSection)
+        if instanceData.len >= 12 and readU32LE(instanceData, 4) > 0:
+          groups.add((outerIndex, nestedIndex))
+    except CatchableError:
+      continue
+
+  var loadedModels = initTable[string, int]()
+  for group in groups:
+    try:
+      let groupScene = loadPlacementModelsFromIso(imagePath, resourcePath,
+        group.outerIndex, group.nestedIndex, maxRecords)
+      var modelRemap = newSeq[int](groupScene.models.len)
+      for groupModelIndex, sceneModel in groupScene.models:
+        let modelKey = sceneModel.modelPath.toLowerAscii() & ":" &
+          $sceneModel.modelId & ":" & sceneModel.materialPath.toLowerAscii() &
+          ":" & $sceneModel.textureId
+        if modelKey in loadedModels:
+          modelRemap[groupModelIndex] = loadedModels[modelKey]
+        else:
+          modelRemap[groupModelIndex] = result.models.len
+          loadedModels[modelKey] = result.models.len
+          result.models.add(sceneModel)
+      for placement in groupScene.placements:
+        var merged = placement
+        merged.modelIndex = modelRemap[placement.modelIndex]
+        result.placements.add(merged)
+      echo "Loaded placement group ", group.outerIndex, "/",
+        group.nestedIndex, ": ", groupScene.placements.len,
+        " object model instances"
+    except CatchableError as error:
+      echo "Skipping placement group ", group.outerIndex, "/",
+        group.nestedIndex, ": ", error.msg
+
+  if result.placements.len == 0:
+    raise newException(IOError, "No loadable placements found in RM2 groups")
   for axis in 0 .. 2:
     result.minimum[axis] = result.placements[0].position[axis]
     result.maximum[axis] = result.placements[0].position[axis]
@@ -634,6 +737,7 @@ proc loadStaticGeometryFromIso*(imagePath, resourcePath: string): ScenePreview =
         modelId: modelId,
         modelPath: resourcePath,
         materialPath: resourcePath,
+        isStaticGeometry: true,
         modelTransform: identityMatrix(),
         model: model,
       )
@@ -727,6 +831,28 @@ proc loadLinkedChunkGeometryFromIso*(imagePath, resourcePath: string,
             result.minimum[axis] = min(result.minimum[axis], worldPosition[axis])
             result.maximum[axis] = max(result.maximum[axis], worldPosition[axis])
       result.models.add(placedModel)
+
+    var rm2Path = current.path
+    if rm2Path.toLowerAscii().endsWith(".sm2"):
+      rm2Path = rm2Path[0 ..< rm2Path.len - 4] & ".rm2"
+    try:
+      let placementScene = loadPlacementGroupsFromIso(imagePath, rm2Path, 10000)
+      let modelOffset = result.models.len
+      for sceneModel in placementScene.models:
+        result.models.add(sceneModel)
+      for placement in placementScene.placements:
+        var placedInstance = placement
+        placedInstance.modelIndex += modelOffset
+        placedInstance.chunkTransform = current.transform
+        result.placements.add(placedInstance)
+        let worldPosition = transformPoint(current.transform, placement.position)
+        for axis in 0 .. 2:
+          result.minimum[axis] = min(result.minimum[axis], worldPosition[axis])
+          result.maximum[axis] = max(result.maximum[axis], worldPosition[axis])
+      echo "Loaded ", placementScene.placements.len,
+        " RM2 object model instances from ", rm2Path
+    except CatchableError as error:
+      echo "No loadable RM2 placements in ", rm2Path, ": ", error.msg
 
     if current.depth >= maxDepth:
       continue
