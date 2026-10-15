@@ -143,10 +143,15 @@ The app now has an experimental placement preview. It reads a bounded number of 
 
 Model vertices and materials decode in isolation, RM2 instance fields decode within bounds, and sampled model-bearing OGI references reach geometry records across archive resources. A bounded placement preview now connects those pieces. The next step is to compare recognizable objects and repeated placements against the retail game, adjust coordinate and rotation conventions based on evidence, and then expand from a placement group to static level geometry.
 
+The renderer also has an experimental `--chunk` view for a paired `.SM2` resource. It loads every Model item from graphics child ID 2, follows each model's mesh record in child ID 6 to the first resolving material/texture link, and draws the decoded vertices together. In `cavent.sm2`, all 13 model items load and produce 9,838 candidate triangles. The paired inspector confirms that all 13 mesh references resolve and that each model's submodel count matches its mesh record's material-link count. The preview draws one texture across each complete model and does not apply additional transforms or assign different materials to individual submodels.
+
+This combined view is only an inspection aid, not a reconstructed Cavern scene. Several individual model bounds cluster around the origin, while others span much larger areas; those ranges do not establish whether positions are baked into a level coordinate system or remain local to separate assets. Overlaying all models may therefore produce overlap. The next useful evidence is the SM2/RM2 relationship and the runtime path that places or selects these records, followed by comparison against the retail level.
+
 ## Next checks
 
 - Check whether `0xFFFF` is the empty OGI-reference sentinel across more resource chunks and identify any non-sentinel exceptions.
 - Verify the instance rotation fields and transform composition against recognizable objects in the retail game.
+- Determine the SM2 model placement relationship and whether the paired RM2 instance groups provide transforms or selection for those records.
 - Extend the placement preview from its first loadable model per instance to multiple OGI models, submodels, and correct material assignment.
 - Compare candidate ordered material/submodel assignments across more models and establish whether the apparent correspondence holds outside the initial visual sample.
 - Trace how the paired-name object and registry result are consumed after lookup, and determine whether that path reaches file access.
