@@ -792,6 +792,91 @@ proc inspectRigidModels(sectionData: openArray[uint8], sectionLength: uint32,
   echo "Header values: ", headerValues
   echo "Records with trailing bytes: ", recordsWithTrailingBytes
 
+proc inspectTextureItems(sectionData: openArray[uint8], sectionLength: uint32) =
+  if sectionData.len < 12:
+    raise newException(IOError, "Texture section is shorter than its header")
+
+  let itemCount = readU32LE(sectionData, 4)
+  let tableLength = 12'u64 + uint64(itemCount) * 12'u64
+  if tableLength > uint64(sectionData.len) or
+      tableLength > uint64(sectionLength):
+    raise newException(IOError, "Texture item table extends beyond its section")
+
+  var formatCounts: array[64, uint64]
+  var sizeMatches = 0'u64
+  var validDimensions = 0'u64
+  var pixelPayloadMatches = 0'u64
+  var transferPayloadMatches = 0'u64
+  var totalImageBytes = 0'u64
+  var dimensionSamples: seq[string]
+
+  for itemIndex in 0 ..< int(itemCount):
+    let entryOffset = 12 + itemIndex * 12
+    let itemOffset = readU32LE(sectionData, entryOffset)
+    let itemLength = readU32LE(sectionData, entryOffset + 4)
+    let itemId = readU32LE(sectionData, entryOffset + 8)
+    let itemEnd = uint64(itemOffset) + uint64(itemLength)
+    if itemOffset < tableLength or itemEnd > uint64(sectionLength) or
+        itemEnd > uint64(sectionData.len):
+      raise newException(IOError, "Texture item range extends beyond its section")
+    if itemLength < 224:
+      raise newException(IOError, "Texture item is shorter than its fixed header")
+
+    let itemStart = int(itemOffset)
+    let textureSize = readU32LE(sectionData, itemStart)
+    if textureSize < 224:
+      raise newException(IOError, "Texture payload size is shorter than its metadata")
+    let widthExponent = int(int16(uint16(readU16LE(sectionData, itemStart + 8))))
+    let heightExponent = int(int16(uint16(readU16LE(sectionData, itemStart + 10))))
+    let mipCount = int(sectionData[itemStart + 12])
+    let pixelFormat = int(sectionData[itemStart + 13])
+    let destinationFormat = int(sectionData[itemStart + 14])
+    let colorComponent = int(sectionData[itemStart + 15])
+    let imageBytes = uint64(textureSize - 224'u32)
+    # The image payload is staged through a 32-bit GS transfer rectangle.
+    let transferWidth = readU32LE(sectionData, itemStart + 180)
+    let transferHeight = readU32LE(sectionData, itemStart + 184)
+
+    if uint64(textureSize) + 4'u64 == uint64(itemLength):
+      inc sizeMatches
+    if widthExponent in 0 .. 10 and heightExponent in 0 .. 10:
+      inc validDimensions
+      if dimensionSamples.len < 8:
+        dimensionSamples.add($itemId & ":" &
+          $(1 shl widthExponent) & "x" & $(1 shl heightExponent))
+      if pixelFormat == 0 and imageBytes ==
+          uint64(1 shl widthExponent) * uint64(1 shl heightExponent) * 4'u64:
+        inc pixelPayloadMatches
+      if pixelFormat in [0, 19] and imageBytes ==
+          uint64(transferWidth) * uint64(transferHeight) * 4'u64:
+        inc transferPayloadMatches
+    if pixelFormat < formatCounts.len:
+      inc formatCounts[pixelFormat]
+    totalImageBytes += imageBytes
+    if itemIndex < 8:
+      echo "Texture item id=", itemId, " bytes=", itemLength,
+        " size=", textureSize, " dimensions=2^", widthExponent, "x2^",
+        heightExponent, " format=0x", toHex(pixelFormat, 2),
+        " destination=0x", toHex(destinationFormat, 2),
+        " components=", colorComponent, " mip-count=", mipCount,
+        " transfer=", transferWidth, "x", transferHeight,
+        " image-bytes=", imageBytes
+
+  echo "Texture items: ", itemCount
+  echo "Texture sizes matching item length (size + 4): ",
+    sizeMatches, " / ", itemCount
+  echo "Valid dimension exponents (0..10): ", validDimensions, " / ", itemCount
+  echo "PSMCT32 payloads matching width * height * 4: ", pixelPayloadMatches
+  echo "PSMCT32/PSMT8 payloads matching 32-bit transfer rectangle: ",
+    transferPayloadMatches, " / ", itemCount
+  echo "Image payload bytes: ", totalImageBytes
+  echo "Pixel format counts:"
+  for format, count in formatCounts:
+    if count > 0:
+      echo "  0x", toHex(format, 2), ": ", count
+  echo "Sample texture dimensions (itemId:width x height): ",
+    dimensionSamples.join(", ")
+
 proc readSectionTable(image: IsoImage, dataFile: IsoEntry, offset: int64,
     sectionLength: uint32): seq[uint8] =
   let fixedLength = int(min(sectionLength, 12'u32))
@@ -862,6 +947,8 @@ proc inspectIsoResource(imagePath, requestedPath: string, nestedIndex,
             modelIds = collectSectionItemIds(siblingData, sibling.byteLength)
             break
         inspectRigidModels(modelData, modelSection.byteLength, modelIds)
+      elif modelSection.id == 0:
+        inspectTextureItems(modelData, modelSection.byteLength)
       else:
         echo "No specialized item parser for nested section ID ",
           modelSection.id
