@@ -14,7 +14,7 @@
 # OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 # PERFORMANCE OF THIS SOFTWARE.
 #
-import std/sets
+import std/[sets, strutils]
 
 import iso_texture
 import ps2_model
@@ -54,7 +54,11 @@ proc findItemRange(itemTable: openArray[uint8], itemId: uint32):
 proc findTexturesForModelFromIso*(imagePath, resourcePath: string,
     modelId: uint32): seq[ModelTextureLink] =
   ## Follow every model-to-rigid-model-to-material-to-texture link in the resource.
-  let rigidModels = readGraphicsSectionFromIso(imagePath, resourcePath, 3)
+  # SM2 stores its mesh/rigid records in child 6; RM2 uses child 3.
+  let rigidSectionId = if resourcePath.toLowerAscii().endsWith(".sm2"):
+    6'u32 else: 3'u32
+  let rigidModels = readGraphicsSectionFromIso(imagePath, resourcePath,
+    rigidSectionId)
   let materials = readGraphicsSectionFromIso(imagePath, resourcePath, 1)
   let textures = readGraphicsSectionFromIso(imagePath, resourcePath, 0)
   let textureItemCount = readU32LE(textures, 4)
