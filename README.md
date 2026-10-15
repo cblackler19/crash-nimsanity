@@ -20,9 +20,9 @@ An experimental native reimplementation of *Crash Twinsanity* in Nim. The projec
 
 ## Current status
 
-The renderer opens an 800 × 600 window, draws a rotating colored cube, and supports basic camera translation. As an asset-pipeline milestone, it can also read one PSMT8 texture and its mip levels directly from a user-supplied ISO and display it on a preview quad. Level geometry, model materials, and full game rendering are not integrated yet.
+The renderer opens an 800 × 600 window, draws a rotating colored cube, and supports basic camera translation. It can also read a PSMT8 texture and its mip levels directly from a user-supplied ISO, then preview either that texture or a selected model item on a rotating textured mesh. Full level geometry, material selection, and game rendering are not integrated yet.
 
-The research tools can inspect an ISO image directly. Current format work covers ISO9660 filesystems, `.BH`/`.BD` archive indexes, `.MH`/`.MB` tables, and `.RM2`/`.SM2` section, texture, material, model, rigid-model reference, and bounded VIF command records, including candidate position, UV/color, normal, emissive-byte, and triangle-strip data. In the Cavern samples, all parsed shader texture IDs and rigid-model material links resolve to sibling records. A Nim PSMT8 decoder converts all 75 Cavern textures and their mip levels into RGBA in memory, and the renderer can display a selected texture directly from the ISO. One decoded base texture has been visually reviewed. Findings and open questions are tracked in [the asset investigation notes](docs/asset-investigation.md). Format labels taken from community tools are identified as their authors' classifications; observed facts and unresolved interpretations are kept separate.
+The research tools can inspect an ISO image directly. Current format work covers ISO9660 filesystems, `.BH`/`.BD` archive indexes, `.MH`/`.MB` tables, and `.RM2`/`.SM2` sections, texture and material links, bounded VIF commands, and decoded model positions, UV/color attributes, and candidate triangle strips. In the Cavern samples, all parsed shader texture IDs and rigid-model material links resolve to sibling records. A Nim PSMT8 decoder converts all 75 Cavern textures and their mip levels into RGBA in memory, and the renderer can preview selected textures and model items directly from the ISO. One decoded base texture has been visually reviewed. Findings and open questions are tracked in [the asset investigation notes](docs/asset-investigation.md). Format labels taken from community tools are identified as their authors' classifications; observed facts and unresolved interpretations are kept separate.
 
 ## Requirements
 
@@ -63,8 +63,9 @@ The repository includes these utilities:
 | `iso9660_inspect` | List ISO9660 directories or print a bounded hexadecimal file range. |
 | `bh_inspect` | Parse a `.BH` archive index and optionally check its ranges against the paired `.BD`. |
 | `mh_inspect` | Compare `.MH` records with candidate ranges in the paired `.MB`. |
-| `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, decode PSMT8 textures and mip levels in memory, inspect material/model/rigid-model records, and scan VIF blocks. |
+| `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, decode PSMT8 textures and mip levels, check model-item VIF decoding coverage, inspect material/rigid-model records, and scan VIF blocks. |
 | `texture_inspect` | Load one PSMT8 texture and its mip levels through an ISO's `.BH`/`.BD` archive without extracting the resource. |
+| `model_inspect` | Decode one model's bounded VIF position, UV/color, and strip records directly from an ISO. |
 | `elf_mips_refs` | Find direct MIPS immediate references to strings in a supplied ELF executable. |
 
 To preview a texture in the OpenGL window, run the main executable with an ISO path, a resource path inside `CRASH.BD`, and a decimal texture ID. For example:
@@ -74,6 +75,14 @@ main /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2" 3879915471
 ```
 
 The preview reads the required ranges directly from the ISO and uploads the decoded base image and mip levels to OpenGL. It does not extract the resource to disk.
+
+To preview one model item with a chosen texture, pass `--model`, the ISO path, resource path, model ID, and texture ID:
+
+```sh
+main --model /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2" 4263539267 3879915471
+```
+
+The current VIF reader handles the observed Cavern position and UV/color UNPACK streams and expands their candidate strip markers into triangles. It does not yet resolve the PS2's full VU memory/TOPS behavior or the model's material links.
 
 The examples below use POSIX shell syntax. In PowerShell, prefix local tools with `.` (for example, `.\tools\rm2_inspect.exe`) and use the `.exe` suffix.
 
@@ -94,6 +103,9 @@ tools/rm2_inspect /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2"
 
 # Load one texture and its mip levels directly from the ISO
 tools/texture_inspect /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2" 3879915471
+
+# Decode one model item from the ISO and report its triangle bounds
+tools/model_inspect /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2" 4263539267
 ```
 
 Select child section `0` to inspect the texture table and summarize dimensions, pixel formats, and transfer-buffer bounds:
@@ -118,7 +130,7 @@ Game images, executables, and extracted assets are not part of this repository. 
 
 ## Credits and research references
 
-- [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), by Smartkin, Artem Yashin (NeoKesha), and BetaM, is MIT licensed. Its archive, section, model, rigid-model, and VIF/DMA readers informed format cross-checks, and its PSMT8 mapping was adapted for the Nim decoder. The local ISO samples were parsed independently. Required MIT notices are retained in [third-party notices](docs/THIRD_PARTY_LICENSES.md).
+- [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), by Smartkin, Artem Yashin (NeoKesha), and BetaM, is MIT licensed. Its archive, section, model, rigid-model, and VIF/DMA readers informed format cross-checks; its PSMT8 mapping and model attribute/strip interpretation were adapted for the Nim implementation. The local ISO samples were parsed independently. Required MIT notices are retained in [third-party notices](docs/THIRD_PARTY_LICENSES.md).
 - [KnuxLib](https://github.com/Knuxfan24/KnuxLib), by Knuxfan24, is MIT licensed and independently recognizes the `.BH`/`.BD` archive pairing. It was used as a format reference; no code was copied.
 - The full source list, attributions, and research limitations are maintained in [the asset investigation notes](docs/asset-investigation.md).
 
