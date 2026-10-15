@@ -48,7 +48,8 @@ proc findArchiveRange(indexData: openArray[uint8], requestedPath: string):
       raise newException(IOError, "Truncated path length in CRASH.BH")
     let pathLength = readU32LE(indexData, cursor)
     let remaining = indexData.len - cursor - 4
-    if pathLength == 0 or uint64(pathLength) > uint64(remaining - 8):
+    if remaining < 8 or pathLength == 0 or
+        uint64(pathLength) > uint64(remaining - 8):
       raise newException(IOError, "Invalid path length in CRASH.BH entry")
 
     let pathStart = cursor + 4
