@@ -65,7 +65,7 @@ The repository includes these utilities:
 | `mh_inspect` | Compare `.MH` records with candidate ranges in the paired `.MB`. |
 | `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, decode PSMT8 textures and mip levels, check model-item VIF decoding coverage and linked material/submodel count agreement, inspect material/rigid-model records, and scan VIF blocks. |
 | `texture_inspect` | Load one PSMT8 texture and its mip levels through an ISO's `.BH`/`.BD` archive without extracting the resource. |
-| `model_inspect` | Decode one model's bounded VIF position, UV/color, and strip records, and report all resolving linked material/texture pairs. |
+| `model_inspect` | Decode one model's bounded VIF position, UV/color, and strip records, report per-submodel vertex/triangle counts, and list all resolving material/texture pairs. |
 | `elf_mips_refs` | Find direct MIPS immediate references to strings in a supplied ELF executable. |
 
 To preview a texture in the OpenGL window, run the main executable with an ISO path, a resource path inside `CRASH.BD`, and a decimal texture ID. For example:
