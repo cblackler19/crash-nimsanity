@@ -1,3 +1,19 @@
+<!-- # ISC License -->
+<!-- # -->
+<!-- # Copyright (c) 2026 Caleb Blackler -->
+<!-- # -->
+<!-- # Permission to use, copy, modify, and/or distribute this software for any -->
+<!-- # purpose with or without fee is hereby granted, provided that the above -->
+<!-- # copyright notice and this permission notice appear in all copies. -->
+<!-- # -->
+<!-- # THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH -->
+<!-- # REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY -->
+<!-- # AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, -->
+<!-- # INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM -->
+<!-- # LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR -->
+<!-- # OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR -->
+<!-- # PERFORMANCE OF THIS SOFTWARE. -->
+
 # Asset investigation notes
 
 These notes record observations from the local NTSC-U/C v1.00 disc image. The image and executable remain local research inputs and are not part of the repository.
@@ -57,6 +73,8 @@ The editor maps RM2 section ID 11 and SM2 section ID 6 to graphics sections. The
 
 The editor's `Model.Load` reader describes each ID-2 model item as a submodel count followed by records containing a vertex count, a VIF byte length and payload, and a blob byte length and payload. The on-ISO reader now walks that structure with per-item bounds checks, without interpreting the VIF instructions. In `cavent.rm2`, all 66 model items parse to the end of their declared ranges with no blob or trailing bytes; they contain 86 submodels, 45,983 declared vertices, and 1,998,704 VIF bytes. In `cavent.sm2`, all 13 model items likewise parse exactly, containing 44 submodels, 14,220 declared vertices, and 423,656 VIF bytes. These measurements confirm the editor's record boundaries for these two samples; they do not confirm the meaning of every VIF operation or vertex attribute.
 
+The editor's `Texture.Load` reader describes texture items as a 32-bit size followed by a fixed 224-byte metadata area and the image payload. It reads width and height exponents, a pixel-format code, mip count, texture-buffer fields, and the transfer rectangle dimensions from this header. The on-ISO child-ID-0 reader now checks these records with bounds validation. All 44 Cavern RM2 textures and all 31 paired SM2 textures have an item length exactly four bytes greater than the stored texture size, valid dimension exponents from 0 through 10, and pixel-format code `0x13` (PSMT8, as classified by the editor). Every image payload length equals the corresponding transfer rectangle's width times height times four bytes. This is consistent with the editor staging the packed image data through a 32-bit GS transfer rectangle; it does not yet decode the PSMT8 swizzle, palette, or mip levels. The texture IDs are preserved in the item table, which will allow a direct comparison with shader texture references when the material records are parsed.
+
 The editor's `DMATag` reader takes the low 16 bits of the first word as QWC, and its VIF interpreter reads that many 16-byte units after the 16-byte tag. Applying that length check to the local VIF streams yields no overrun in either sample: 22 of 86 RM2 streams and 10 of 44 SM2 streams match `16 + QWC * 16` exactly. The rest have 12–36 bytes after that range, and every such byte is zero. For the first `cavent.rm2` stream, the QWC candidate is 973, giving 15,584 tag-plus-payload bytes inside a 15,620-byte VIF field, with 36 zero bytes following. The residual bytes are observed; their purpose is not yet established. This length check alone does not decode VIF payloads or verify the PS2's full DMA behavior.
 
 The inspector now walks VIF command boundaries inside the tag's 8-byte command area plus its QWC-bounded payload. It accounts for command words, UNPACK payload sizes (including STCYCL cycle lengths and the packed V4-5 form), STMASK, STROW/STCOL, MPG, and DIRECT/DIRECTHL payloads. The scan uses little-endian command words and checks each payload against the bounded DMA span. Across the Cavern samples it walks 13,308 commands in 86 RM2 streams and 3,550 commands in 44 SM2 streams. It finds 7,700 and 1,700 UNPACK commands respectively; all streams finish on a command boundary, with no unsupported opcode or truncated payload encountered. This validates command boundaries for these samples only; the inspector does not reconstruct VU memory, decode vertex attributes, or establish triangle connectivity.
@@ -96,6 +114,8 @@ These call-site observations are consistent with the `.BH` index and `.BD` data 
 - Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/TwinsSection.cs`. Its section-ID labels are recorded as editor classifications and used as research leads; no source code was copied or adapted.
 - Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/Items/Graphics/Model.cs`. Its `Model.Load` record layout guided the bounded inspection above; the two sample resources were parsed independently from the local ISO. No source code was copied or adapted.
 - Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/Items/Graphics/RigidModel.cs`. Its field layout guided the bounded check of graphics child IDs 3 and 6; the sample records were parsed independently from the local ISO. No source code was copied or adapted.
+- Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/Items/Graphics/Texture.cs`. Its texture-header and GS format labels guided the bounded texture-record check; the local ISO ranges were checked independently. No source code was copied or adapted.
+- Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/Items/Graphics/Material.cs` and `Twinsanity/TwinsShader.cs`. Their material and shader readers are the next reference for linking material records to texture IDs; no source code was copied or adapted.
 - Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/VIF/DMATag.cs` and `Twinsanity/VIF/VIFInterpreter.cs`. Their QWC field handling guided a bounded length cross-check; no VIF interpreter code was copied or adapted.
 - [PS2SDK VIF code definitions](https://ps2dev.github.io/ps2sdk/vif__codes_8h.html) and [packet types](https://ps2dev.github.io/ps2sdk/group__packet2__types.html), maintained by the PS2SDK project. Opcode, UNPACK mode, and command bit-field definitions informed the bounded VIF walk; no SDK code was copied.
 - Knuxfan24, [KnuxLib](https://github.com/Knuxfan24/KnuxLib). Its MIT-licensed format list independently records `.BD`/`.BH` as a Crash Twinsanity archive pair. It is a possible comparison source for later parser work; no code was used here.
