@@ -63,10 +63,10 @@ nim c --path:src --out:tools/mh_audio_export tools/mh_audio_export.nim
 tools/mh_audio_export /path/to/Crash-Twinsanity.iso 7 candidate.wav
 ```
 
-The exporter accepts an optional channel-chunk size in 16-byte ADPCM blocks and an optional sample-rate override. By default it tries 128 blocks (0x800 bytes) per channel chunk and uses the rate in the table. These are diagnostic hypotheses, not confirmed Twinsanity settings. For example, compare the default with a 16 kHz render:
+The exporter reads the two-track interleave size from the second `MUSIC.MH` header word (65,536 bytes per track chunk in the inspected disc) and uses each record's rate and final-track end offset. It writes track 0 to the left channel and track 1 to the right as a listening candidate. The game-side source suggests that mapping when stereo music is enabled, but the current NTSC-U executable has not yet been checked and the resulting audio still needs listening validation. An optional track-chunk size in bytes and sample-rate override are available for diagnosis. The earlier 0x800-byte hypothesis was rejected by listening feedback. For example, override the chunk size with 32,768 bytes and the rate with 16 kHz:
 
 ```sh
-tools/mh_audio_export /path/to/Crash-Twinsanity.iso 7 candidate-16k.wav 128 16000
+tools/mh_audio_export /path/to/Crash-Twinsanity.iso 7 candidate-16k.wav 32768 16000
 ```
 
 The game-specific layout and playback rate remain unresolved; see the listening feedback and next checks in [the asset investigation notes](docs/asset-investigation.md).
@@ -78,7 +78,7 @@ The repository includes these utilities:
 | `iso9660_inspect` | List ISO9660 directories or print a bounded hexadecimal file range. |
 | `bh_inspect` | Parse a `.BH` archive index and optionally check its ranges against the paired `.BD`. |
 | `mh_inspect` | Compare `.MH` records with candidate ranges in the paired `.MB`. |
-| `mh_audio_export` | Compare candidate chunk-interleaved stereo decodes of type-1 `MUSIC.MH` ranges, writing WAV directly from ISO data. |
+| `mh_audio_export` | Decode candidate two-track interleaved type-1 `MUSIC.MH` ranges, writing WAV directly from ISO data. |
 | `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, decode PSMT8 textures and mip levels, check model-item VIF decoding coverage and linked material/submodel count agreement, inspect material/rigid-model records, and scan VIF blocks. |
 | `texture_inspect` | Load one PSMT8 texture and its mip levels through an ISO's `.BH`/`.BD` archive without extracting the resource. |
 | `model_inspect` | Decode one model's bounded VIF position, UV/color, and strip records, report per-submodel vertex/triangle counts, and list all resolving material/texture pairs. |
