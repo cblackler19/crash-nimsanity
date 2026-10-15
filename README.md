@@ -146,7 +146,7 @@ To inspect an RM2 instance group's object placements, select an outer instance-g
 tools/rm2_inspect /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2" 4 6
 ```
 
-The inspector reports bounded position and rotation fields, linked IDs, and whether each placed object's ID appears in the sibling Code/Object table. It checks candidate graphics-info links against Code/OGI records, then follows model-bearing OGI links through rigid-model records to geometry Model IDs across RM2/SM2 resources indexed from the ISO. The tool can dump ranges directly from either a selected outer section or nested section with `--hex`. The sampled chunks now resolve all model-bearing links in this chain; special/unresolved OGI values and the placement transform conventions remain under investigation. Rotation values are shown as raw 16-bit fields, not converted to angles or matrices.
+The inspector reports bounded position and rotation fields, linked IDs, and whether each placed object's ID appears in the sibling Code/Object table. It checks candidate graphics-info links against Code/OGI records, then follows model-bearing OGI links through rigid-model records to geometry Model IDs across RM2/SM2 resources indexed from the ISO. It also reports unresolved OGI IDs with their frequency; in the three current samples, every unresolved value is `0xFFFF`, a likely empty-reference sentinel. The tool can dump ranges directly from either a selected outer section or nested section with `--hex`. All non-sentinel links in the sampled chunks resolve through this chain. Rotation values are shown as raw 16-bit fields, not converted to angles or matrices.
 
 `elf_mips_refs` currently accepts a standalone ELF file path rather than an ISO path:
 
