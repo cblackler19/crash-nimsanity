@@ -1,3 +1,4 @@
+import std/math
 import nimgl/[glfw, opengl]
 
 const GlFloatEnum = GLenum(0x1406)
@@ -7,11 +8,12 @@ const vertexShaderSource = """
 
 layout (location = 0) in vec3 aPosition;
 layout (location = 1) in vec3 aColor;
+uniform mat4 uTransform;
 
 out vec3 vertexColor;
 
 void main() {
-    gl_Position = vec4(aPosition, 1.0);
+    gl_Position = uTransform * vec4(aPosition, 1.0);
     vertexColor = aColor;
 }
 """
@@ -27,6 +29,18 @@ void main() {
     fragColor = vec4(vertexColor, 1.0);
 }
 """
+
+proc rotationMatrixZ(angle: float32): array[16, float32] =
+    let c = cos(angle)
+    let s = sin(angle)
+
+    # OpenGL consumes matrices in column-major order.
+    result = [
+        c,    s,    0.0'f32, 0.0'f32,
+        -s,   c,    0.0'f32, 0.0'f32,
+        0.0'f32, 0.0'f32, 1.0'f32, 0.0'f32,
+        0.0'f32, 0.0'f32, 0.0'f32, 1.0'f32
+    ]
 
 proc compileShader(kind: GLenum, source: string): GLuint =
     result = glCreateShader(kind)
@@ -98,6 +112,8 @@ proc main() =
     glDeleteShader(vertexShader)
     glDeleteShader(fragmentShader)
 
+    let transformLocation = glGetUniformLocation(shaderProgram, "uTransform")
+
     # Each vertex stores its position followed by its RGB color.
     var vertices: array[18, float32] = [
          0.0'f32,  0.5'f32, 0.0'f32, 1.0'f32, 0.2'f32, 0.2'f32,
@@ -167,6 +183,8 @@ proc main() =
 
         # render triangle
         glUseProgram(shaderProgram)
+        let transform = rotationMatrixZ(float32(glfwGetTime()))
+        glUniformMatrix4fv(transformLocation, 1, GLboolean(0), transform[0].addr)
         glBindVertexArray(vao)
 
         glDrawArrays(GL_TRIANGLES, 0, 3)
