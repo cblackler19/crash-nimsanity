@@ -69,7 +69,7 @@ The exporter reads the two-track interleave size from the second `MUSIC.MH` head
 tools/mh_audio_export /path/to/Crash-Twinsanity.iso 7 candidate-16k.wav 32768 16000
 ```
 
-The game-specific layout and playback rate remain unresolved; see the listening feedback and next checks in [the asset investigation notes](docs/asset-investigation.md).
+The two-track layout and rate fields are supported by the PAL game-side source, but their NTSC-U behavior and the audible result remain under investigation; see [the asset investigation notes](docs/asset-investigation.md).
 
 The repository includes these utilities:
 
