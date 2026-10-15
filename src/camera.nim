@@ -14,10 +14,12 @@ proc moveCamera*(camera: var Camera, direction: Vec3, deltaTime: float32) =
   if length <= 0.0'f32:
     return
 
+  # Scale by the input length so diagonal movement is no faster than straight movement.
   let distance = CameraMoveSpeed * deltaTime / length
   camera.position.x += direction.x * distance
   camera.position.y += direction.y * distance
   camera.position.z += direction.z * distance
 
 proc viewMatrix*(camera: Camera): Mat4 =
+  # With no camera rotation yet, the view transform is the inverse of its position.
   translationMatrix(-camera.position.x, -camera.position.y, -camera.position.z)

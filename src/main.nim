@@ -115,6 +115,7 @@ proc main() =
       window.setWindowShouldClose(true)
 
     var width, height: int32
+    # GLFW window dimensions can differ from framebuffer pixels on high-DPI displays.
     window.getFramebufferSize(width.addr, height.addr)
     if width != lastWidth or height != lastHeight:
       glViewport(0, 0, width, height)
@@ -122,6 +123,7 @@ proc main() =
       lastHeight = height
 
     let currentTime = glfwGetTime()
+    # Time-based movement keeps camera speed independent of the frame rate.
     let deltaTime = float32(currentTime - lastFrameTime)
     lastFrameTime = currentTime
 
@@ -140,6 +142,7 @@ proc main() =
 
     glUseProgram(shaderProgram)
     let time = float32(currentTime)
+    # The shader applies transforms in model, view, then projection order.
     let model = multiply(rotationMatrixY(time * 0.7'f32), rotationMatrixX(time * 0.5'f32))
     let view = camera.viewMatrix()
     let aspect = if width > 0 and height > 0: float32(width) / float32(height) else: 1.0'f32

@@ -8,6 +8,7 @@ type
 
 proc multiply*(a, b: Mat4): Mat4 =
   # Matrices use OpenGL's column-major storage convention.
+  # Each output cell is the dot product of a row from `a` and a column from `b`.
   for column in 0 .. 3:
     for row in 0 .. 3:
       for i in 0 .. 3:
@@ -46,6 +47,7 @@ proc translationMatrix*(x, y, z: float32): Mat4 =
 proc perspectiveMatrix*(fovRadians, aspect, nearPlane, farPlane: float32): Mat4 =
   let f = 1.0'f32 / tan(fovRadians / 2.0'f32)
 
+  # This projection maps the near/far planes into OpenGL's -1..1 clip-space depth.
   result = [
     f / aspect, 0.0'f32, 0.0'f32, 0.0'f32,
     0.0'f32, f, 0.0'f32, 0.0'f32,

@@ -25,6 +25,7 @@ proc parseDirectoryEntry(data: openArray[uint8], offset, recordLength: int): Dir
   if recordLength < 33 + nameLength:
     raise newException(IOError, "Malformed ISO directory record")
 
+  # ISO9660 stores many numeric fields twice (little- and big-endian); use the LE copy.
   result.extentLba = readU32LE(data, offset + 2)
   result.byteLength = readU32LE(data, offset + 10)
   result.isDirectory = (data[offset + 25] and 0x02) != 0
@@ -55,6 +56,7 @@ proc inspectDirectory(file: File, directory: DirectoryEntry, prefix: string,
   while offset < contents.len:
     let recordLength = int(contents[offset])
     if recordLength == 0:
+      # Directory records do not cross sectors; zero padding advances to the next one.
       offset = ((offset div SectorSize) + 1) * SectorSize
       continue
     if recordLength < 34 or offset + recordLength > contents.len:
@@ -83,6 +85,7 @@ proc main() =
   defer: close(image)
 
   let descriptor = readBytes(image, int64(16 * SectorSize), SectorSize)
+  # ISO9660 places its primary volume descriptor at logical block 16.
   if descriptor[0] != 1 or descriptor[1 .. 5] != @[uint8('C'), uint8('D'), uint8('0'), uint8('0'), uint8('1')] or descriptor[6] != 1:
     quit("No ISO9660 primary volume descriptor at sector 16", 1)
 

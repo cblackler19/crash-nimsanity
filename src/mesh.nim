@@ -3,6 +3,7 @@ import nimgl/opengl
 const GlFloatEnum = GLenum(0x1406)
 
 type
+  # Position and RGB color are stored consecutively for one interleaved GPU buffer.
   Vertex* = object
     position*: array[3, float32]
     color*: array[3, float32]
@@ -24,6 +25,7 @@ proc addFace(vertices: var seq[Vertex], a, b, c, d: array[3, float32], color: ar
 proc cubeVertices(): seq[Vertex] =
   const p = 0.5'f32
 
+  # Expand each square face into two triangles; this keeps per-face colors independent.
   result = newSeqOfCap[Vertex](36)
   result.addFace([-p, -p, p], [p, -p, p], [p, p, p], [-p, p, p], [1.0'f32, 0.3'f32, 0.2'f32])
   result.addFace([p, -p, -p], [-p, -p, -p], [-p, p, -p], [p, p, -p], [0.2'f32, 0.4'f32, 1.0'f32])
@@ -49,6 +51,7 @@ proc uploadMesh*(vertices: openArray[Vertex]): Mesh =
     GL_STATIC_DRAW
   )
 
+  # Both attributes share the Vertex stride; color begins after three position floats.
   glVertexAttribPointer(0, 3, GlFloatEnum, GLboolean(0), GLsizei(sizeof(Vertex)), nil)
   glEnableVertexAttribArray(0)
   glVertexAttribPointer(
@@ -72,5 +75,6 @@ proc draw*(mesh: Mesh) =
   glDrawArrays(GL_TRIANGLES, 0, mesh.vertexCount)
 
 proc destroy*(mesh: var Mesh) =
+  # Release the GPU objects owned by this mesh while its OpenGL context is alive.
   glDeleteVertexArrays(1, mesh.vao.addr)
   glDeleteBuffers(1, mesh.vbo.addr)
