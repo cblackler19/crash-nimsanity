@@ -38,6 +38,17 @@ proc main() =
     echo "Submodels: ", model.submodelCount
     echo "Decoded triangles: ", model.triangleCount
     echo "Expanded triangle vertices: ", model.vertices.len
+    var normalReferences = 0
+    var emissiveReferences = 0
+    for vertex in model.vertices:
+      if vertex.hasNormal:
+        inc normalReferences
+      if vertex.hasEmissiveColor:
+        inc emissiveReferences
+    echo "Expanded vertices with decoded normals: ", normalReferences,
+      " / ", model.vertices.len
+    echo "Expanded vertices with decoded emissive colors: ",
+      emissiveReferences, " / ", model.vertices.len
     for submodelIndex in 0 ..< model.submodelCount:
       echo "  submodel ", submodelIndex, ": ",
         model.submodelVertexCounts[submodelIndex], " source vertices, ",
