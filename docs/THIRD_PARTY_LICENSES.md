@@ -18,7 +18,7 @@
 
 ## Twinsanity Editor
 
-The PSMT8 GS address tables and addressing method in `src/ps2_texture.nim` are adapted from the `EzSwizzle.cs` implementation in [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), by Vladislav Smyshlyaev (Smartkin), Artem Yashin (NeoKesha), and BetaM. The reference repository is MIT licensed. The implementation here is rewritten in Nim and adapted to decode the game's bounded texture item data in memory.
+The PSMT8 GS address tables in `src/ps2_texture.nim` are adapted from `EzSwizzle.cs`. The model attribute and strip-triangle interpretation in `src/ps2_model.nim` follows `Model.cs` and `VIFInterpreter.cs`. These files are in [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), by Vladislav Smyshlyaev (Smartkin), Artem Yashin (NeoKesha), and BetaM. The reference repository is MIT licensed. The Nim implementation decodes bounded texture and model records from the ISO; VU memory relocation and game material behavior remain unresolved.
 
 ```text
 MIT License
