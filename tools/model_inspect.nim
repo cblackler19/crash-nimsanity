@@ -38,6 +38,12 @@ proc main() =
     echo "Submodels: ", model.submodelCount
     echo "Decoded triangles: ", model.triangleCount
     echo "Expanded triangle vertices: ", model.vertices.len
+    try:
+      let link = findTextureForModelFromIso(paramStr(1), paramStr(2), modelId)
+      echo "Linked material: ", link.materialId
+      echo "Linked texture: ", link.textureId
+    except CatchableError as error:
+      echo "Linked texture unavailable: ", error.msg
     if model.vertices.len > 0:
       var minimum = model.vertices[0].position
       var maximum = minimum
