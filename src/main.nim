@@ -66,6 +66,8 @@ void main() {
 }
 """
 
+const MouseLookSensitivity = 0.0025'f32
+
 type PreviewAssets = object
   showTexture: bool
   showModel: bool
@@ -401,6 +403,10 @@ proc main() =
 
   glEnable(GL_DEPTH_TEST)
   glfwSwapInterval(1)
+  # Disabled mode hides and captures the cursor while the preview is active.
+  window.setInputMode(GLFWCursorSpecial, GLFWCursorDisabled)
+  var previousCursorX, previousCursorY: float64
+  window.getCursorPos(previousCursorX.addr, previousCursorY.addr)
 
   var lastWidth, lastHeight: int32 = -1
   var lastFrameTime = glfwGetTime()
@@ -433,14 +439,14 @@ proc main() =
     if window.keyDown(GLFWKey.R): movement.y += 1.0'f32
     if window.keyDown(GLFWKey.F): movement.y -= 1.0'f32
     camera.moveCamera(movement, deltaTime)
-    var yawInput = 0.0'f32
-    var pitchInput = 0.0'f32
-    if window.keyDown(GLFWKey.Q): yawInput -= 1.0'f32
-    if window.keyDown(GLFWKey.E): yawInput += 1.0'f32
-    if window.keyDown(GLFWKey.T): pitchInput += 1.0'f32
-    if window.keyDown(GLFWKey.G): pitchInput -= 1.0'f32
-    camera.rotateCamera(yawInput * 1.5'f32 * deltaTime,
-      pitchInput * 1.5'f32 * deltaTime)
+    var cursorX, cursorY: float64
+    window.getCursorPos(cursorX.addr, cursorY.addr)
+    let mouseDeltaX = float32(cursorX - previousCursorX)
+    let mouseDeltaY = float32(cursorY - previousCursorY)
+    camera.rotateCamera(-mouseDeltaX * MouseLookSensitivity,
+      -mouseDeltaY * MouseLookSensitivity)
+    previousCursorX = cursorX
+    previousCursorY = cursorY
 
     glClearColor(0.12'f32, 0.14'f32, 0.18'f32, 1.0'f32)
     glClear(GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT)
@@ -508,6 +514,9 @@ proc main() =
       previewMesh.draw()
 
     window.swapBuffers()
+
+  # Restore normal cursor behavior before destroying the GLFW window.
+  window.setInputMode(GLFWCursorSpecial, GLFWCursorNormal)
 
   if not preview.showPlacements and not preview.showStaticGeometry:
     previewMesh.destroy()
