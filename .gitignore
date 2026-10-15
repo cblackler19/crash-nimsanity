@@ -23,3 +23,5 @@
 /tools/bh_inspect.exe
 /tools/mh_inspect
 /tools/mh_inspect.exe
+/tools/elf_mips_refs
+/tools/elf_mips_refs.exe
