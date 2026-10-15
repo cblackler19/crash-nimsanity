@@ -82,6 +82,19 @@ proc readU16LE(data: openArray[uint8], offset: int): uint16 =
 
   uint16(data[offset]) or (uint16(data[offset + 1]) shl 8)
 
+proc dumpHexRange(data: openArray[uint8], offset, byteCount: int) =
+  if offset < 0 or byteCount < 0 or offset > data.len - byteCount:
+    raise newException(IOError, "Hex range extends beyond the selected section")
+  let limit = offset + byteCount
+  var cursor = offset
+  while cursor < limit:
+    stdout.write(toHex(cursor, 8), "  ")
+    let rowEnd = min(cursor + 16, limit)
+    for index in cursor ..< rowEnd:
+      stdout.write(toHex(int(data[index]), 2), " ")
+    stdout.writeLine("")
+    cursor = rowEnd
+
 proc alignUp(value, alignment: int): int =
   ((value + alignment - 1) div alignment) * alignment
 
@@ -1060,6 +1073,11 @@ proc readSectionTable(image: IsoImage, dataFile: IsoEntry, offset: int64,
   if fixedHeader.len < 12:
     raise newException(IOError, "Section is shorter than its header")
 
+  let magic = readU32LE(fixedHeader, 0)
+  if magic notin [0x00010001'u32, 0x00010003'u32]:
+    raise newException(IOError,
+      "Selected payload is not a recognized RM2/SM2 section table")
+
   let sectionCount = readU32LE(fixedHeader, 4)
   let tableLength = 12'u64 + uint64(sectionCount) * 12'u64
   if tableLength > uint64(sectionLength) or tableLength > uint64(high(int)):
@@ -1067,8 +1085,8 @@ proc readSectionTable(image: IsoImage, dataFile: IsoEntry, offset: int64,
 
   image.readSlice(dataFile, offset, int(tableLength))
 
-proc inspectIsoResource(imagePath, requestedPath: string, nestedIndex,
-    modelIndex: int) =
+proc inspectIsoResource(imagePath, requestedPath: string, outerSectionIndex,
+    nestedSectionIndex: int) =
   let image = openIso(imagePath)
   defer: image.close()
 
@@ -1090,28 +1108,38 @@ proc inspectIsoResource(imagePath, requestedPath: string, nestedIndex,
   echo "Bytes: ", archiveEntry.dataLength
   let sections = inspectResource(resourceHeader, archiveEntry.dataLength)
 
-  if nestedIndex >= 0:
-    if nestedIndex >= sections.len:
+  if outerSectionIndex >= 0:
+    if outerSectionIndex >= sections.len:
       raise newException(IOError, "Outer section index is out of range")
-    let section = sections[nestedIndex]
+    let section = sections[outerSectionIndex]
     let sectionOffset = resourceOffset + int64(section.offset)
     let nestedHeader = readSectionTable(
       image, dataFile, sectionOffset, section.byteLength
     )
-    echo "Nested table for outer section index ", nestedIndex,
+    echo "Nested table for outer section index ", outerSectionIndex,
       " (id=", section.id, ", bytes=", section.byteLength, ")"
     let nestedSections = inspectResource(nestedHeader, section.byteLength)
 
-    if modelIndex >= 0:
-      if modelIndex >= nestedSections.len:
+    if nestedSectionIndex >= 0:
+      if nestedSectionIndex >= nestedSections.len:
         raise newException(IOError, "Nested section index is out of range")
-      let modelSection = nestedSections[modelIndex]
-      let modelOffset = sectionOffset + int64(modelSection.offset)
-      let modelData = image.readSlice(dataFile, modelOffset,
-        int(modelSection.byteLength))
-      echo "Item table for nested section index ", modelIndex,
-        " (id=", modelSection.id, ", bytes=", modelSection.byteLength, ")"
-      if modelSection.id == 2:
+      let childSection = nestedSections[nestedSectionIndex]
+      let childOffset = sectionOffset + int64(childSection.offset)
+      let childData = image.readSlice(dataFile, childOffset,
+        int(childSection.byteLength))
+      echo "Payload for nested section index ", nestedSectionIndex,
+        " (id=", childSection.id, ", bytes=", childSection.byteLength, ")"
+      if paramCount() == 7:
+        if paramStr(5) != "--hex":
+          raise newException(IOError, "Expected --hex before the requested byte range")
+        var hexOffset, hexByteCount: int
+        try:
+          hexOffset = parseInt(paramStr(6))
+          hexByteCount = parseInt(paramStr(7))
+        except ValueError:
+          raise newException(IOError, "Hex range offset and size must be integers")
+        dumpHexRange(childData, hexOffset, hexByteCount)
+      elif section.id == 11 and childSection.id == 2:
         var rigidMaterialCounts = initTable[uint32, uint32]()
         for sibling in nestedSections:
           if sibling.id in [3'u32, 6'u32]:
@@ -1122,9 +1150,9 @@ proc inspectIsoResource(imagePath, requestedPath: string, nestedIndex,
               sibling.byteLength)
             if rigidMaterialCounts.len > 0:
               break
-        inspectModelItems(modelData, modelSection.byteLength,
+        inspectModelItems(childData, childSection.byteLength,
           rigidMaterialCounts)
-      elif modelSection.id in [3'u32, 6'u32]:
+      elif section.id == 11 and childSection.id in [3'u32, 6'u32]:
         var modelIds = initHashSet[uint32]()
         var materialIds = initHashSet[uint32]()
         for sibling in nestedSections:
@@ -1138,11 +1166,11 @@ proc inspectIsoResource(imagePath, requestedPath: string, nestedIndex,
               materialIds = siblingIds
             else:
               modelIds = siblingIds
-        inspectRigidModels(modelData, modelSection.byteLength, modelIds,
+        inspectRigidModels(childData, childSection.byteLength, modelIds,
           materialIds)
-      elif modelSection.id == 0:
-        inspectTextureItems(modelData, modelSection.byteLength)
-      elif modelSection.id == 1:
+      elif section.id == 11 and childSection.id == 0:
+        inspectTextureItems(childData, childSection.byteLength)
+      elif section.id == 11 and childSection.id == 1:
         var textureIds = initHashSet[uint32]()
         for sibling in nestedSections:
           if sibling.id == 0:
@@ -1151,31 +1179,32 @@ proc inspectIsoResource(imagePath, requestedPath: string, nestedIndex,
               int(sibling.byteLength))
             textureIds = collectSectionItemIds(siblingData, sibling.byteLength)
             break
-        discard inspectMaterialItems(modelData, modelSection.byteLength,
+        discard inspectMaterialItems(childData, childSection.byteLength,
           textureIds)
       else:
-        echo "No specialized item parser for nested section ID ",
-          modelSection.id
+        echo "No specialized parser for outer section ID ", section.id,
+          " and nested section ID ", childSection.id
 
 proc main() =
-  if paramCount() notin [2, 3, 4]:
-    quit("Usage: rm2_inspect <image.iso> <path-inside-CRASH.BD> [outer-section-index [item-section-index]]", 1)
+  if paramCount() notin [2, 3, 4, 7]:
+    quit("Usage: rm2_inspect <image.iso> <path-inside-CRASH.BD> [outer-section-index [nested-section-index [--hex offset byte-count]]]", 1)
 
-  var nestedIndex = -1
-  var modelIndex = -1
+  var outerSectionIndex = -1
+  var nestedSectionIndex = -1
   if paramCount() >= 3:
     try:
-      nestedIndex = parseInt(paramStr(3))
+      outerSectionIndex = parseInt(paramStr(3))
     except ValueError:
       quit("Outer section index must be an integer", 1)
-  if paramCount() == 4:
+  if paramCount() in [4, 7]:
     try:
-      modelIndex = parseInt(paramStr(4))
+      nestedSectionIndex = parseInt(paramStr(4))
     except ValueError:
-      quit("Item section index must be an integer", 1)
+      quit("Nested section index must be an integer", 1)
 
   try:
-    inspectIsoResource(paramStr(1), paramStr(2), nestedIndex, modelIndex)
+    inspectIsoResource(paramStr(1), paramStr(2), outerSectionIndex,
+      nestedSectionIndex)
   except IOError as error:
     quit(error.msg, 1)
   except ValueError as error:
