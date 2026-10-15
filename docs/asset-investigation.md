@@ -131,9 +131,21 @@ The installed vtable is at `0x00306100`. Its nonzero entries include methods at 
 
 These call-site observations are consistent with the `.BH` index and `.BD` data being paired, which matches their on-disc lengths and ranges, but do not by themselves prove the exact open/read sequence or all container semantics.
 
+## RM2 object placements and transforms
+
+The Twinsanity Editor classifies RM2 root section IDs 0 through 7 as instance groups, ID 8 as particle data, ID 9 as collision data, ID 10 as code, and ID 11 as graphics. These are community-tool labels cross-checked against our section tables; they are not inferred from numeric IDs alone. The `cavent.rm2` resource has its first instance group at outer table index 4 (ID 0). Its nested section ID 6 contains eight bounded object-instance records. The same group contains 37 records in `nitrocav.rm2` and four in `cavrnend.rm2`.
+
+The bounded reader interprets each record as a position vector, six raw 16-bit rotation fields, three counted reference lists, an object ID, flags, and three counted property arrays. This field order follows the attributed Editor reader and is checked against the item boundaries in all three samples: all 49 records end exactly at the declared boundary, and all position vectors are finite. Every placed object ID resolves to an item ID in the sibling Code/Object table: 8/8, 37/37, and 4/4 respectively. This establishes the placement-to-object-definition link for these samples.
+
+The object-definition reader also extracts candidate graphics-info links. Against each resource's sibling Code/OGI table, 217 of 242 candidate links resolve in Cavent, 251 of 294 in Nitrocav, and 1 of 4 in Cavern End. The unresolved values and the meaning of these lists remain open; they are not yet a reliable placement-to-model mapping. The position values and rotation words are reported by `rm2_inspect`, but their world-space basis, rotation units/order, and final transform composition have not been established. A world-placed model preview is therefore still ahead.
+
+This finding narrows the immediate gap: model vertices and materials already decode in isolation, and RM2 object-instance transforms now decode within bounds. Next we need to resolve GameObject-to-OGI-to-model references, validate which OGI links are model-bearing, then verify rotation conversion and render a small placement group from the ISO.
+
 ## Next checks
 
-- Inspect the model and mesh payloads in the RM2/SM2 graphics sections and verify their vertex and index layouts against the actual bytes.
+- Resolve valid GameObject graphics-info references to OGI model IDs, including special or unresolved link values.
+- Verify the instance rotation fields and transform composition against recognizable objects before drawing world-placed models.
+- Build a small placement preview that reuses the current model/material decoder and reads all source ranges directly from the ISO.
 - Compare candidate ordered material/submodel assignments across more models and establish whether the apparent correspondence holds outside the initial visual sample.
 - Trace how the paired-name object and registry result are consumed after lookup, and determine whether that path reaches file access.
 
@@ -142,6 +154,7 @@ These call-site observations are consistent with the `.BH` index and `.BD` data 
 - Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/BDArchive.cs`. The repository is MIT-licensed. Its archive reader/writer is used here as an attributed format cross-check only; no source code was copied or adapted. If MIT-licensed code is reused from this project later, retain the MIT copyright and permission notice for that code when distributing the ISC-licensed project.
 - Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/TwinsFile.cs`. Its RM/SM pair and section-table descriptions guided the next inspection target; the header and range findings above were checked independently against our ISO. No source code was copied or adapted.
 - Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/TwinsSection.cs`. Its section-ID labels are recorded as editor classifications and used as research leads; no source code was copied or adapted.
+- Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/TwinsFile.cs`, `Twinsanity/Items/Instances/Instance.cs`, `Twinsanity/Items/Instances/InstanceTemplate.cs`, `Twinsanity/Items/Code/GameObject.cs`, and `Twinsanity/Items/Code/GraphicsInfo.cs`. Their root-section routing and bounded object, instance, and graphics-info field descriptions guided this placement inspection. The Nim reader was implemented independently; no code was copied or adapted.
 - Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/Items/Graphics/Model.cs`. Its `Model.Load` layout guided the bounded reader, and its attribute/strip interpretation informs the Nim model decoder. The adaptation and required MIT notice are recorded in [third-party notices](THIRD_PARTY_LICENSES.md).
 - Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/Items/Graphics/RigidModel.cs`. Its field layout guided the bounded check of graphics child IDs 3 and 6; the sample records were parsed independently from the local ISO. No source code was copied or adapted.
 - Smartkin, Artem Yashin (NeoKesha), and BetaM, [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), `Twinsanity/Items/Graphics/Texture.cs`. Its texture-header and GS format labels guided the bounded texture-record check; the local ISO ranges were checked independently. No source code was copied or adapted.
