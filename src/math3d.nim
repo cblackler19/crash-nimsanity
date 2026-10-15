@@ -60,6 +60,17 @@ proc rotationMatrixY*(angle: float32): Mat4 =
     0.0'f32, 0.0'f32, 0.0'f32, 1.0'f32
   ]
 
+proc rotationMatrixZ*(angle: float32): Mat4 =
+  let c = cos(angle)
+  let s = sin(angle)
+
+  result = [
+    c,        s,        0.0'f32, 0.0'f32,
+    -s,       c,        0.0'f32, 0.0'f32,
+    0.0'f32, 0.0'f32, 1.0'f32, 0.0'f32,
+    0.0'f32, 0.0'f32, 0.0'f32, 1.0'f32
+  ]
+
 proc translationMatrix*(x, y, z: float32): Mat4 =
   result = [
     1.0'f32, 0.0'f32, 0.0'f32, 0.0'f32,
