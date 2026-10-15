@@ -132,6 +132,7 @@ Game images, executables, and extracted assets are not part of this repository. 
 
 - [Twinsanity Editor](https://github.com/Smartkin/twinsanity-editor), by Smartkin, Artem Yashin (NeoKesha), and BetaM, is MIT licensed. Its archive, section, model, rigid-model, and VIF/DMA readers informed format cross-checks; its PSMT8 mapping and model attribute/strip interpretation were adapted for the Nim implementation. The local ISO samples were parsed independently. Required MIT notices are retained in [third-party notices](docs/THIRD_PARTY_LICENSES.md).
 - [KnuxLib](https://github.com/Knuxfan24/KnuxLib), by Knuxfan24, is MIT licensed and independently recognizes the `.BH`/`.BD` archive pairing. It was used as a format reference; no code was copied.
+- [vgmstream](https://github.com/vgmstream/vgmstream), by its contributors and licensed under ISC, provided a reference interpretation for the `MSVp` music headers; no code was copied.
 - The full source list, attributions, and research limitations are maintained in [the asset investigation notes](docs/asset-investigation.md).
 
 ## License
