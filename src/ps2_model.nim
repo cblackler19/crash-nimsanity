@@ -19,8 +19,12 @@
 type
   ModelVertex* = object
     position*: array[3, float32]
+    normal*: array[3, float32]
+    hasNormal*: bool
     uv*: array[2, float32]
     color*: array[4, uint8]
+    emissiveColor*: array[4, uint8]
+    hasEmissiveColor*: bool
     connected*: bool
 
   DecodedModel* = object
@@ -65,7 +69,9 @@ proc decodeSubmodel(data: openArray[uint8], vifStart, vifLength: int,
     raise newException(ValueError, "Model VIF QWC exceeds its bounded range")
 
   var positions: seq[array[3, float32]]
+  var normals: seq[array[3, float32]]
   var attributes: seq[array[4, uint32]]
+  var emissiveColors: seq[array[4, uint8]]
   var cursor = vifStart + 8
   let limit = vifStart + transferLength
   var cycleLength = 0
@@ -98,9 +104,9 @@ proc decodeSubmodel(data: openArray[uint8], vifStart, vifLength: int,
       let format = opcode and 0x1F
       # The reference reader groups attributes by the low address bits and does
       # not apply TOPS relocation; this parser follows that observed grouping.
-      if address in [3, 4] and (mode != 0 or maskApplied):
+      if address in [3, 4, 5, 6] and (mode != 0 or maskApplied):
         raise newException(ValueError,
-          "Masked or offset-mode VIF attributes are not supported")
+          "Masked or offset-mode VIF vertex attributes are not supported")
 
       if address == 3 and format == 0x08:
         if outputCount * 12 > payloadBytes:
@@ -114,6 +120,20 @@ proc decodeSubmodel(data: openArray[uint8], vifStart, vifLength: int,
             if not finite(position[component]):
               raise newException(ValueError, "Model contains a non-finite position")
           positions.add(position)
+      # Cavern streams classify addresses 5 and 6 as optional per-vertex
+      # normals and emissive bytes, so accept either complete stream or none.
+      elif address == 5 and format == 0x08:
+        if outputCount * 12 > payloadBytes:
+          raise newException(ValueError, "Normal UNPACK payload is truncated")
+        for index in 0 ..< outputCount:
+          var normal: array[3, float32]
+          for component in 0 .. 2:
+            normal[component] = cast[float32](
+              readU32LE(data, cursor + index * 12 + component * 4)
+            )
+            if not finite(normal[component]):
+              raise newException(ValueError, "Model contains a non-finite normal")
+          normals.add(normal)
       elif address == 4 and format == 0x0C:
         if outputCount * 16 > payloadBytes:
           raise newException(ValueError, "UV UNPACK payload is truncated")
@@ -123,6 +143,15 @@ proc decodeSubmodel(data: openArray[uint8], vifStart, vifLength: int,
             vector[component] = readU32LE(data,
               cursor + index * 16 + component * 4)
           attributes.add(vector)
+      elif address == 6 and format == 0x0E:
+        if outputCount * 4 > payloadBytes:
+          raise newException(ValueError, "Emissive-color UNPACK payload is truncated")
+        for index in 0 ..< outputCount:
+          let colorOffset = cursor + index * 4
+          emissiveColors.add([
+            data[colorOffset], data[colorOffset + 1],
+            data[colorOffset + 2], data[colorOffset + 3]
+          ])
     else:
       case opcode
       of 0x01:
@@ -151,6 +180,11 @@ proc decodeSubmodel(data: openArray[uint8], vifStart, vifLength: int,
 
   if positions.len != vertexCount or attributes.len != vertexCount:
     raise newException(ValueError, "Model position/UV counts do not match vertices")
+  if normals.len != 0 and normals.len != vertexCount:
+    raise newException(ValueError, "Model normal count does not match vertices")
+  if emissiveColors.len != 0 and emissiveColors.len != vertexCount:
+    raise newException(ValueError,
+      "Model emissive-color count does not match vertices")
 
   for index in 0 ..< vertexCount:
     let packed = attributes[index]
@@ -159,8 +193,16 @@ proc decodeSubmodel(data: openArray[uint8], vifStart, vifLength: int,
     let v = 1.0'f32 - rawV
     if not finite(u) or not finite(v):
       raise newException(ValueError, "Model contains non-finite texture coordinates")
+    let normal = if normals.len == vertexCount: normals[index]
+      else: [0.0'f32, 0.0'f32, 0.0'f32]
+    let emissiveColor = if emissiveColors.len == vertexCount:
+      emissiveColors[index]
+    else:
+      [0'u8, 0'u8, 0'u8, 0'u8]
     result.add(ModelVertex(
       position: positions[index],
+      normal: normal,
+      hasNormal: normals.len == vertexCount,
       uv: [u, v],
       color: [
         uint8(packed[0] and 0xFF),
@@ -168,6 +210,8 @@ proc decodeSubmodel(data: openArray[uint8], vifStart, vifLength: int,
         uint8(packed[2] and 0xFF),
         uint8((packed[3] shl 1) and 0xFF)
       ],
+      emissiveColor: emissiveColor,
+      hasEmissiveColor: emissiveColors.len == vertexCount,
       connected: ((packed[3] shr 8) and 0xFF) != 128
     ))
 
