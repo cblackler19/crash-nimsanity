@@ -20,7 +20,7 @@ An experimental native reimplementation of *Crash Twinsanity* in Nim. The projec
 
 ## Current status
 
-The renderer opens an 800 × 600 window, draws a rotating colored cube, and supports basic camera translation and look controls. It can read textures and models directly from a user-supplied ISO, preview placed objects, and draw model items from paired `.SM2` resources. The experimental chunk-link mode loads neighboring `.SM2` resources and their paired `.RM2` placement groups. For each placed object, it draws every distinct loadable geometry model reached through the object's graphics-info links at the stored position, falling back to decoded vertex colors when a texture link does not resolve. Chunk `ObjectMatrix` transforms and the shared transform for an object's candidate models remain experimental. Material assignment, coordinate conversion, and level completeness are unconfirmed; game-accurate rendering, collision, and gameplay are not integrated yet.
+The renderer opens an 800 × 600 window, draws a rotating colored cube, and supports camera movement and mouse look. It can read textures and models directly from a user-supplied ISO, preview placed objects, and draw model items from paired `.SM2` resources. The experimental chunk-link mode loads neighboring `.SM2` resources and their paired `.RM2` placement groups. For each placed object, it draws the first loadable geometry model reached through the object's graphics-info links, falling back to decoded vertex colors when a texture link does not resolve. Other OGI candidates are not overlaid because their relationship to one object transform is unknown. Chunk `ObjectMatrix` transforms, coordinate conversion, and level completeness remain unconfirmed; game-accurate rendering, collision, and gameplay are not integrated yet.
 
 The research tools can inspect an ISO image directly. Current format work covers ISO9660 filesystems, `.BH`/`.BD` archive indexes, `.MH`/`.MB` tables, and `.RM2`/`.SM2` sections, texture and material links, bounded VIF commands, and decoded model positions, normals, UV/color attributes, emissive-color candidates, and triangle strips. Music record 7 now decodes using the 64 KiB two-track interleave and end offset inferred from `MUSIC.MH`; the user confirmed that the generated WAV sounds identical to the retail game. The relevant playback setup was cross-referenced with Smartkin's `twinsanity-reversed` decompilation, with attribution and licensing limits documented below. In the Cavern samples, all parsed shader texture IDs and rigid-model material links resolve to sibling records. A Nim PSMT8 decoder converts all 75 Cavern textures and their mip levels into RGBA in memory, and the renderer can preview selected textures and model items directly from the ISO. The model inspector lists every resolving material/texture pair and reports normal/emissive attribute coverage for an item. The default model preview uses the first pair; an explicitly experimental mode applies material links to submodels in list order when their counts match. The initial Crash model preview was recognized by the user as the spinning Crash model, a useful visual check that does not establish the mapping for all models. One decoded base texture has also been visually reviewed. Findings and open questions are tracked in [the asset investigation notes](docs/asset-investigation.md). Format labels taken from community tools are identified as their authors' classifications; observed facts and unresolved interpretations are kept separate.
 
@@ -44,8 +44,9 @@ Controls in the current renderer:
 
 - `W`, `A`, `S`, `D`: move relative to the camera's horizontal look direction.
 - `R`, `F`: move up and down.
-- `Q`, `E`: look left and right; `T`, `G`: look up and down.
-- `Esc`: close the window.
+- Mouse movement: look left/right and up/down. The cursor is captured while the window is open.
+- Camera movement speed: 12 world units per second.
+- `Esc`: close the window and release the cursor.
 
 ## ISO research tools
 
@@ -105,7 +106,7 @@ To preview the first 32 object placements from a resource instance group, pass t
 .\main.exe --placements ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.rm2" 4 6
 ```
 
-Add a final integer to change the record limit. For each placement, the preview draws every distinct loadable geometry model reached through the object's graphics-info links, all at the stored position and rotation, and centers the camera on the selected positions. Candidates without a resolving texture are rendered with their decoded vertex colors. Primary 16-bit rotation words are treated as turns with 65,536 units per revolution and composed in XYZ Euler order; the companion `COMRot` words are ignored. Applying the same transform to all model candidates is experimental; instance relationships and game-accurate transforms are not applied.
+Add a final integer to change the record limit. For each placement, the preview draws the first loadable geometry model reached through the object's graphics-info links at the stored position and rotation, and centers the camera on the selected positions. Other candidates are omitted until their relationship to the object transform is established. Candidates without a resolving texture are rendered with their decoded vertex colors. Primary 16-bit rotation words are treated as turns with 65,536 units per revolution and composed in XYZ Euler order; the companion `COMRot` words are ignored. Instance relationships and game-accurate transforms are not applied.
 
 To draw all model items in a paired `.SM2` resource together, use the experimental chunk-geometry view:
 
@@ -121,7 +122,7 @@ To include linked chunks, run `--chunk-links` with the same resource path. The o
 .\main.exe --chunk-links ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.sm2"
 ```
 
-The preview follows the paths in SM2 root section 5, appends `.sm2`, and applies each link's `ObjectMatrix` to its static models and RM2 placements. It also reads every nonempty RM2 instance group in each linked resource and draws every distinct loadable geometry model reached from each object's graphics-info links at that object's transform. These transform and candidate-composition choices remain experimental. Models without a resolving texture are kept and drawn using their decoded vertex colors.
+The preview follows the paths in SM2 root section 5, appends `.sm2`, and applies each link's `ObjectMatrix` to its static models and RM2 placements. It reads every nonempty RM2 instance group in each linked resource and draws the first loadable geometry model reached from each object's graphics-info links. The transform interpretation remains experimental. Models without a resolving texture are kept and drawn using their decoded vertex colors.
 
 For models where the number of resolved material links matches the number of submodels, the renderer can try assigning those links to submodels in list order. This is an unverified format hypothesis and is enabled only by the explicit flag:
 
