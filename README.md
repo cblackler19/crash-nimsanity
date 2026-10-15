@@ -65,7 +65,7 @@ The repository includes these utilities:
 | `mh_inspect` | Compare `.MH` records with candidate ranges in the paired `.MB`. |
 | `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, decode PSMT8 textures and mip levels, check model-item VIF decoding coverage, inspect material/rigid-model records, and scan VIF blocks. |
 | `texture_inspect` | Load one PSMT8 texture and its mip levels through an ISO's `.BH`/`.BD` archive without extracting the resource. |
-| `model_inspect` | Decode one model's bounded VIF position, UV/color, and strip records directly from an ISO. |
+| `model_inspect` | Decode one model's bounded VIF position, UV/color, and strip records, and report its linked material texture when available. |
 | `elf_mips_refs` | Find direct MIPS immediate references to strings in a supplied ELF executable. |
 
 To preview a texture in the OpenGL window, run the main executable with an ISO path, a resource path inside `CRASH.BD`, and a decimal texture ID. For example:
@@ -76,13 +76,13 @@ main /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2" 3879915471
 
 The preview reads the required ranges directly from the ISO and uploads the decoded base image and mip levels to OpenGL. It does not extract the resource to disk.
 
-To preview one model item with a chosen texture, pass `--model`, the ISO path, resource path, model ID, and texture ID:
+To preview a model item, pass `--model`, the ISO path, resource path, and model ID. The app follows the model's rigid-model and material references to choose a texture. Add a texture ID at the end to override that choice:
 
 ```sh
-main --model /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2" 4263539267 3879915471
+main --model /path/to/Crash-Twinsanity.iso "Levels\Earth\Cavern\cavent.rm2" 4263539267
 ```
 
-The current VIF reader handles the observed Cavern position and UV/color UNPACK streams and expands their candidate strip markers into triangles. It does not yet resolve the PS2's full VU memory/TOPS behavior or the model's material links.
+The current VIF reader handles the observed Cavern position and UV/color UNPACK streams and expands their candidate strip markers into triangles. It does not yet resolve the PS2's full VU memory/TOPS behavior or reproduce all material shader settings.
 
 The examples below use POSIX shell syntax. In PowerShell, prefix local tools with `.` (for example, `.\tools\rm2_inspect.exe`) and use the `.exe` suffix.
 
