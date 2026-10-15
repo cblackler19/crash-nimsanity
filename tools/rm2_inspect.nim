@@ -14,7 +14,7 @@
 # OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 # PERFORMANCE OF THIS SOFTWARE.
 #
-import std/[math, os, sets, strutils]
+import std/[math, os, sets, strutils, tables]
 
 import iso9660
 import ps2_model
@@ -359,7 +359,8 @@ proc inspectResource(resourceData: openArray[uint8], resourceLength: uint32): se
   if rangesAreContiguous and expectedOffset == uint64(resourceLength):
     echo "Section ranges are contiguous and cover the resource payload."
 
-proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
+proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32,
+    rigidMaterialCounts: Table[uint32, uint32]) =
   if sectionData.len < 12:
     raise newException(IOError, "Model section is shorter than its header")
 
@@ -418,6 +419,8 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
   var reconstructedSubmodelCount = 0'u64
   var reconstructedTriangleCount = 0'u64
   var modelDecodeFailures = 0'u64
+  var modelsWithRigidLinks = 0'u64
+  var modelsMatchingMaterialCount = 0'u64
 
   for itemIndex in 0 ..< int(sectionCount):
     let entryOffset = 12 + itemIndex * 12
@@ -433,6 +436,11 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
 
     let itemStart = int(itemOffset)
     let itemLimit = itemStart + int(itemLength)
+    let submodelCount = readU32LE(sectionData, itemStart)
+    if itemId in rigidMaterialCounts:
+      inc modelsWithRigidLinks
+      if rigidMaterialCounts[itemId] == submodelCount:
+        inc modelsMatchingMaterialCount
     try:
       let decoded = decodeModelItem(sectionData, itemStart, int(itemLength))
       inc reconstructedModelCount
@@ -442,7 +450,6 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
       inc modelDecodeFailures
       if modelDecodeFailures <= 3:
         echo "Model decoder rejected item ", itemId, ": ", error.msg
-    let submodelCount = readU32LE(sectionData, itemStart)
     var cursor = itemStart + 4
     var itemVertices = 0'u64
     var itemVifBytes = 0'u64
@@ -653,6 +660,9 @@ proc inspectModelItems(sectionData: openArray[uint8], sectionLength: uint32) =
   echo "Decoded submodels and triangle count: ", reconstructedSubmodelCount,
     " / ", reconstructedTriangleCount
   echo "Model decode failures: ", modelDecodeFailures
+  echo "Models linked by rigid-model records: ", modelsWithRigidLinks
+  echo "Linked model submodel counts matching material counts: ",
+    modelsMatchingMaterialCount, " / ", modelsWithRigidLinks
   echo "VIF streams where tag+QWC matches declared length: ",
     vifStreamsMatchingQwcLength, " / ", vifStreamsWithQwc
   echo "Streams with zero bytes after tag+QWC: ", vifStreamsWithZeroQwcTail
@@ -746,6 +756,35 @@ proc collectSectionItemIds(sectionData: openArray[uint8],
         itemEnd > uint64(sectionData.len):
       raise newException(IOError, "Model item range extends beyond its section")
     result.incl(itemId)
+
+proc collectRigidMaterialCounts(sectionData: openArray[uint8],
+    sectionLength: uint32): Table[uint32, uint32] =
+  if sectionData.len < 12:
+    raise newException(IOError, "Rigid-model section is shorter than its header")
+
+  let itemCount = readU32LE(sectionData, 4)
+  let tableLength = 12'u64 + uint64(itemCount) * 12'u64
+  if tableLength > uint64(sectionData.len) or
+      tableLength > uint64(sectionLength):
+    raise newException(IOError, "Rigid-model item table extends beyond its section")
+
+  result = initTable[uint32, uint32]()
+  for itemIndex in 0 ..< int(itemCount):
+    let entryOffset = 12 + itemIndex * 12
+    let itemOffset = readU32LE(sectionData, entryOffset)
+    let itemLength = readU32LE(sectionData, entryOffset + 4)
+    let itemEnd = uint64(itemOffset) + uint64(itemLength)
+    if itemOffset < tableLength or itemEnd > uint64(sectionLength) or
+        itemEnd > uint64(sectionData.len) or itemLength < 12:
+      raise newException(IOError, "Rigid-model item range is malformed")
+
+    let itemStart = int(itemOffset)
+    let materialCount = readU32LE(sectionData, itemStart + 4)
+    let meshOffset = uint64(itemOffset) + 8'u64 + uint64(materialCount) * 4'u64
+    if meshOffset + 4'u64 > itemEnd:
+      raise newException(IOError, "Rigid-model material list exceeds its item")
+    let modelId = readU32LE(sectionData, int(meshOffset))
+    result[modelId] = materialCount
 
 proc inspectRigidModels(sectionData: openArray[uint8], sectionLength: uint32,
     modelIds, materialIds: HashSet[uint32]) =
@@ -1073,7 +1112,18 @@ proc inspectIsoResource(imagePath, requestedPath: string, nestedIndex,
       echo "Item table for nested section index ", modelIndex,
         " (id=", modelSection.id, ", bytes=", modelSection.byteLength, ")"
       if modelSection.id == 2:
-        inspectModelItems(modelData, modelSection.byteLength)
+        var rigidMaterialCounts = initTable[uint32, uint32]()
+        for sibling in nestedSections:
+          if sibling.id in [3'u32, 6'u32]:
+            let siblingOffset = sectionOffset + int64(sibling.offset)
+            let siblingData = image.readSlice(dataFile, siblingOffset,
+              int(sibling.byteLength))
+            rigidMaterialCounts = collectRigidMaterialCounts(siblingData,
+              sibling.byteLength)
+            if rigidMaterialCounts.len > 0:
+              break
+        inspectModelItems(modelData, modelSection.byteLength,
+          rigidMaterialCounts)
       elif modelSection.id in [3'u32, 6'u32]:
         var modelIds = initHashSet[uint32]()
         var materialIds = initHashSet[uint32]()
