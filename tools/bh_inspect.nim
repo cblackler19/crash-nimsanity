@@ -16,6 +16,8 @@
 #
 import std/os
 
+import iso9660
+
 type CatalogEntry = object
   path: string
   dataOffset: uint32
@@ -45,13 +47,11 @@ proc parseEntry(data: string, offset: var int): CatalogEntry =
   result.dataLength = readU32LE(data, pathEnd + 4)
   offset = pathEnd + 8
 
-proc inspectCatalog(indexPath: string, dataPath: string) =
-  let data = readFile(indexPath)
+proc inspectCatalog(data: string, dataLength: int64) =
   if data.len < 4:
     raise newException(IOError, "Index file is shorter than its header")
 
   let headerWord = readU32LE(data, 0)
-  let dataLength = if dataPath.len > 0: getFileSize(dataPath) else: -1'i64
   var offset = 4
   var entryCount = 0
   var expectedDataOffset = 0'u64
@@ -85,12 +85,44 @@ proc inspectCatalog(indexPath: string, dataPath: string) =
     if expectedDataOffset == uint64(dataLength) and rangesAreContiguous:
       echo "Index covers the complete paired data file."
 
-proc main() =
-  if paramCount() notin 1 .. 2:
-    quit("Usage: bh_inspect <index.bh> [data.bd]", 1)
+proc inspectIsoCatalog(imagePath, indexPath, dataPath: string) =
+  let image = openIso(imagePath)
+  defer: image.close()
 
-  let dataPath = if paramCount() == 2: paramStr(2) else: ""
-  inspectCatalog(paramStr(1), dataPath)
+  let indexEntry = image.findEntry(indexPath)
+  let dataEntry = image.findEntry(dataPath)
+  if indexEntry.isDirectory or dataEntry.isDirectory:
+    raise newException(IOError, "Index and paired data paths must refer to files")
+
+  let indexBytes = image.readSlice(indexEntry, 0, int(indexEntry.byteLength))
+  var indexData = newString(indexBytes.len)
+  for i, value in indexBytes:
+    indexData[i] = char(value)
+
+  echo "ISO volume: ", image.volumeName
+  echo "Index path: ", indexPath, " (", indexEntry.byteLength, " bytes)"
+  echo "Paired data path: ", dataPath, " (", dataEntry.byteLength, " bytes)"
+  inspectCatalog(indexData, int64(dataEntry.byteLength))
+
+proc main() =
+  if paramCount() > 0 and paramStr(1) == "--iso":
+    if paramCount() notin [2, 4]:
+      quit("Usage: bh_inspect --iso <image.iso> [index-path data-path]", 1)
+    let indexPath = if paramCount() == 4: paramStr(3) else: "CRASH6/CRASH.BH"
+    let dataPath = if paramCount() == 4: paramStr(4) else: "CRASH6/CRASH.BD"
+    try:
+      inspectIsoCatalog(paramStr(2), indexPath, dataPath)
+    except IOError as error:
+      quit(error.msg, 1)
+  else:
+    if paramCount() notin 1 .. 2:
+      quit("Usage: bh_inspect <index.bh> [data.bd]", 1)
+    let indexData = readFile(paramStr(1))
+    let dataLength = if paramCount() == 2: getFileSize(paramStr(2)) else: -1'i64
+    try:
+      inspectCatalog(indexData, dataLength)
+    except IOError as error:
+      quit(error.msg, 1)
 
 when isMainModule:
   main()
