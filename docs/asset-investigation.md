@@ -27,9 +27,13 @@ Both `.MH` files have the same length and begin with these 8 bytes:
 
 Interpreting the first two words as little-endian integers gives `143` and `65536`. The remaining 2,860 bytes divide evenly into 143 records of 20 bytes each. Each record can therefore be viewed as five little-endian 32-bit words for inspection; their meanings are not yet known.
 
-In record zero, words 1 and 2 are `309024` and `12812288` for `AMERICAN.MH`, and `309024` and `221464576` for `MUSIC.MH`. In both cases their sum is 224 bytes less than the length of the correspondingly named `.MB` file. This repeated relationship is a lead for checking offsets and ranges, not yet a confirmed interpretation of either word.
+Treating word 1 as a candidate byte length and word 2 as a candidate byte offset keeps all 143 ranges inside each corresponding `.MB` file. In record zero, those words are `309024` and `12812288` for `AMERICAN.MH`, and `309024` and `221464576` for `MUSIC.MH`; each range ends 224 bytes before the end of its `.MB` file.
 
-Later records differ between the two tables, including small values in word 0 and values that vary in words 1, 2, and 4. No field names or asset types have been assigned.
+All 143 `AMERICAN.MH` candidate offsets begin an `MSVp` byte sequence in `AMERICAN.MB`. The 13 records in `MUSIC.MH` with word 0 equal to `0` also begin `MSVp` sequences in `MUSIC.MB`. At these range starts, the big-endian word at byte 4 is `32`, and the big-endian word at byte 12 plus 48 equals the candidate range length for every checked entry. This links those records to bounded `MSVp` ranges; it does not identify the format's fields.
+
+The 62 `MUSIC.MH` records with word 0 equal to `1` point to ranges that begin without `MSVp`. Sorted by offset, these ranges are contiguous from byte zero through byte `221118464`. The remaining 68 records have word 0 equal to `2` and words 1 through 4 all zero. These groupings are observed values; their meanings remain unknown.
+
+At the `MSVp` range starts, the big-endian word at byte 16 matches `.MH` word 3 for all 13 type-0 music entries and 140 of 143 American entries. The exceptions are American records 125, 131, and 134: their `.MH` word 3 is `32000`, while the corresponding `.MB` word is `18000`, `48000`, and `48000`. Word 3 therefore should not be treated as a universal copy of that `.MB` field.
 
 In `MUSIC.MH`, records 7 through 10 have word 0 equal to `1`. Their word 2 values are `0`, `3932160`, `8912896`, and `13631488`; for each record after the first, word 2 equals the prior record's word 2 plus its word 1. This is consistent with a cumulative range or offset field across those four records, though the address space and meaning are still unknown.
 
@@ -43,5 +47,5 @@ The local game executable contains strings including `.BH`, `.BD`, `%s.mb`, `Cra
 
 ## Next checks
 
-- Compare `.MH` ranges and repeated records with the corresponding `.MB` files while keeping field meanings provisional.
+- Inspect the `MSVp` header and music type-1 payload structure further, keeping the observed range associations separate from field semantics.
 - Check executable references around the container suffix strings before claiming how the tables are consumed at runtime.
