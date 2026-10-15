@@ -93,6 +93,10 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
   var typeOneFrameHeaderBytes: array[256, int]
   var typeOneFrameFlagBytes: array[256, int]
   var typeOneWord3Counts = initTable[uint32, int]()
+  var typeOneWord4Counts = initTable[uint32, int]()
+  var typeOneWord4AlignedCount = 0
+  var typeOneWord4Minimum = high(uint32)
+  var typeOneWord4Maximum = 0'u32
 
   for recordIndex in 0 ..< int(declaredCount):
     let base = TableHeaderSize + recordIndex * RecordSize
@@ -111,11 +115,17 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
     if kind == 1:
       inc typeOneCount
       let word3 = readU32LE(headerData, base + 12)
+      let word4 = readU32LE(headerData, base + 16)
       typeOneWord3Counts.mgetOrPut(word3, 0).inc
+      typeOneWord4Counts.mgetOrPut(word4, 0).inc
+      if word4 mod 16 == 0:
+        inc typeOneWord4AlignedCount
+      typeOneWord4Minimum = min(typeOneWord4Minimum, word4)
+      typeOneWord4Maximum = max(typeOneWord4Maximum, word4)
       echo "Type-1 table record ", recordIndex, ": length=", byteLength,
         " offset=", byteOffset,
         " word3=", word3,
-        " word4=", readU32LE(headerData, base + 16)
+        " word4=", word4
       if byteLength mod 16 == 0:
         inc alignedTypeOneCount
       if byteOffset mod 16 == 0:
@@ -218,6 +228,10 @@ proc inspectTables(imagePath, headerPath, dataPath: string) =
   echo "Type-1 raw word3 value frequencies (possible sample-rate field):"
   for value, count in typeOneWord3Counts:
     echo "  ", value, ": ", count
+  echo "Type-1 raw word4: min=", typeOneWord4Minimum,
+    " max=", typeOneWord4Maximum,
+    " distinct values=", typeOneWord4Counts.len,
+    " divisible by 16=", typeOneWord4AlignedCount, " / ", typeOneCount
   echo "Type-1 ranges with a 16-byte zero prefix: ", typeOneZeroPrefixCount,
     " / ", typeOneCount
   echo "Type-1 ranges with 0x000C words at +0x10..+0xD0: ",
