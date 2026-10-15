@@ -35,12 +35,13 @@ In `MUSIC.MH`, records 7 through 10 have word 0 equal to `1`. Their word 2 value
 
 ## `.BH` / `.BD` and executable clues
 
-`CRASH.BH` begins with the little-endian word `1281` and contains readable paths such as `Startup\Fonts\Crash.psf` and language resources, interleaved with binary fields. The record boundaries and the meaning of the initial word have not been established. `CRASH.BD` begins with `03 00 00 00`; this is not enough to identify its format.
+`CRASH.BH` begins with the little-endian word `1281`; its meaning is not identified. After that word, the file parses exactly into 612 variable-length entries. Each entry contains a little-endian path byte length, that many path bytes, a little-endian data offset, and a little-endian data length. The entries consume the index to EOF. In table order, every data offset equals the prior range's end, starting at byte zero, and the final range ends at byte `890464828`, exactly the length of `CRASH.BD`.
+
+The read-only Nim utility [`bh_inspect.nim`](../tools/bh_inspect.nim) parses this layout, reports each path and range, and can check that ranges stay within a supplied `.BD` file. The data image itself was not extracted. `CRASH.BD` begins with `03 00 00 00`; this alone does not identify its internal format.
 
 The local game executable contains strings including `.BH`, `.BD`, `%s.mb`, `Crash6\Crash`, `Crash6\Music`, `STREAM.IRX`, `CDVDSTM.IRX`, and `streaming options`. These strings are consistent with the game referencing the named files and a streaming subsystem, but do not prove the exact open/read sequence or container semantics.
 
 ## Next checks
 
-- Compare all `.MH` records with ranges inside their `.MB` files, keeping the five words unnamed until bounds and repeated patterns support stronger claims.
-- Determine `.BH` record boundaries and test candidate fields against paths and offsets in `.BD` without extracting or changing the source image.
+- Compare `.MH` ranges and repeated records with the corresponding `.MB` files while keeping field meanings provisional.
 - Check executable references around the container suffix strings before claiming how the tables are consumed at runtime.
