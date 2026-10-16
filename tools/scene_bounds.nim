@@ -51,6 +51,30 @@ proc measure(model: SceneModel, transform: Mat4): Bounds =
         result.maximum[axis] = max(result.maximum[axis], point[axis])
     inc result.vertexCount
 
+proc transformBounds(minimum, maximum: array[3, float32],
+    transform: Mat4): Bounds =
+  for corner in 0 .. 7:
+    let point = transformPoint(transform, [
+      if (corner and 1) == 0: minimum[0] else: maximum[0],
+      if (corner and 2) == 0: minimum[1] else: maximum[1],
+      if (corner and 4) == 0: minimum[2] else: maximum[2],
+    ])
+    if result.vertexCount == 0:
+      result.minimum = point
+      result.maximum = point
+    else:
+      for axis in 0 .. 2:
+        result.minimum[axis] = min(result.minimum[axis], point[axis])
+        result.maximum[axis] = max(result.maximum[axis], point[axis])
+    inc result.vertexCount
+
+proc encloses(outer, inner: Bounds, tolerance = 0.01'f32): bool =
+  for axis in 0 .. 2:
+    if outer.minimum[axis] > inner.minimum[axis] + tolerance or
+        outer.maximum[axis] < inner.maximum[axis] - tolerance:
+      return false
+  true
+
 proc formatBounds(bounds: Bounds): string =
   if bounds.vertexCount == 0:
     return "no triangle vertices"
@@ -93,6 +117,11 @@ proc main() =
       let bounds = measure(model, model.modelTransform)
       echo "static[", staticIndex, "] model=", model.modelId,
         " resource=", model.modelPath, " ", formatBounds(bounds)
+      if model.hasSceneryBounds:
+        let storedBounds = transformBounds(model.sceneryBoundsMinimum,
+          model.sceneryBoundsMaximum, model.modelTransform)
+        echo "  record bounds ", formatBounds(storedBounds),
+          "; encloses decoded vertices: ", encloses(storedBounds, bounds)
       inc staticIndex
 
     for placementIndex, placement in scene.placements:
