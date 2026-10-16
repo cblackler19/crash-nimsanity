@@ -18,6 +18,7 @@ import std/[math, os, strutils]
 import nimgl/[glfw, opengl]
 
 import camera
+import frustum
 import iso_model
 import iso_scene
 import iso_texture
@@ -353,6 +354,12 @@ proc makeSceneVertices(model: DecodedModel): seq[Vertex] =
       texCoord: source.uv
     ))
 
+proc modelBounds(model: DecodedModel): Bounds3 =
+  var positions = newSeqOfCap[array[3, float32]](model.vertices.len)
+  for vertex in model.vertices:
+    positions.add(vertex.position)
+  boundsOf(positions)
+
 proc previewAngle(raw: uint16): float32 =
   float32(raw) * (2.0'f32 * PI.float32 / 65536.0'f32)
 
@@ -469,9 +476,11 @@ proc main() =
   var previewMesh: Mesh
   var sceneMeshes: seq[Mesh]
   var sceneTextures: seq[Texture2D]
+  var sceneBounds: seq[Bounds3]
   if preview.showPlacements or preview.showStaticGeometry:
     for sceneModel in preview.scene.models:
       sceneMeshes.add(uploadMesh(makeSceneVertices(sceneModel.model)))
+      sceneBounds.add(modelBounds(sceneModel.model))
       if sceneModel.hasTexture:
         sceneTextures.add(uploadTexture2D(sceneModel.texture))
       else:
@@ -567,6 +576,7 @@ proc main() =
       100.0'f32
     let projection = perspectiveMatrix(45.0'f32 * PI.float32 / 180.0'f32,
       aspect, 0.1'f32, projectionFar)
+    let viewProjection = multiply(projection, view)
 
     glUniformMatrix4fv(viewLocation, 1, GLboolean(0), view[0].addr)
     glUniformMatrix4fv(projectionLocation, 1, GLboolean(0), projection[0].addr)
@@ -581,6 +591,9 @@ proc main() =
             placementIndex != preview.selectedGeometryIndex:
           continue
         let transform = placementMatrix(placement, preview.scene)
+        if outsideClipFrustum(multiply(viewProjection, transform),
+            sceneBounds[placement.modelIndex]):
+          continue
         glUniformMatrix4fv(modelLocation, 1, GLboolean(0), transform[0].addr)
         let sceneModel = preview.scene.models[placement.modelIndex]
         glUniform1i(useTextureLocation,
@@ -603,6 +616,9 @@ proc main() =
         inc staticModelIndex
         let transform = multiply(centerTransform,
           sceneModel.modelTransform)
+        if outsideClipFrustum(multiply(viewProjection, transform),
+            sceneBounds[modelIndex]):
+          continue
         glUniformMatrix4fv(modelLocation, 1, GLboolean(0), transform[0].addr)
         glUniform1i(useTextureLocation,
           GLint(if sceneModel.hasTexture: 1 else: 0))
