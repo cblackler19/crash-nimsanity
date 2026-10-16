@@ -134,8 +134,8 @@ proc loadPreviewAssets(): PreviewAssets =
       result.scene = loadStaticGeometryFromIso(paramStr(2), paramStr(3))
       result.showStaticGeometry = true
       echo "Loaded ", result.scene.models.len,
-        " SM2 models as untransformed geometry candidates"
-      echo "Decoded positions are drawn without inferred object transforms"
+        " SM2 scenery mesh entries with section-0 transforms"
+      echo "LOD entries and per-cell visibility culling are not implemented yet"
     except CatchableError as error:
       quit("Could not load ISO static-geometry preview: " & error.msg, 1)
     return
