@@ -547,7 +547,9 @@ proc main() =
     if window.keyDown(GLFWKey.D): movement.x += 1.0'f32
     if window.keyDown(GLFWKey.R): movement.y += 1.0'f32
     if window.keyDown(GLFWKey.F): movement.y -= 1.0'f32
-    camera.moveCamera(movement, deltaTime)
+    let speedMultiplier = if window.keyDown(GLFWKey.LeftShift) or
+        window.keyDown(GLFWKey.RightShift): 5.0'f32 else: 1.0'f32
+    camera.moveCamera(movement, deltaTime, speedMultiplier)
     var cursorX, cursorY: float64
     window.getCursorPos(cursorX.addr, cursorY.addr)
     let mouseDeltaX = float32(cursorX - previousCursorX)
