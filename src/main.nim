@@ -54,11 +54,14 @@ in vec3 vertexColor;
 in vec2 textureCoord;
 uniform sampler2D uTexture;
 uniform int uUseTexture;
+uniform int uPreviewWhite;
 
 out vec4 fragColor;
 
 void main() {
-    if (uUseTexture != 0) {
+    if (uPreviewWhite != 0) {
+        fragColor = vec4(1.0);
+    } else if (uUseTexture != 0) {
         fragColor = texture(uTexture, textureCoord) * vec4(vertexColor, 1.0);
     } else {
         fragColor = vec4(vertexColor, 1.0);
@@ -67,6 +70,7 @@ void main() {
 """
 
 const MouseLookSensitivity = 0.0025'f32
+const PreviewWhiteUniformValue = when defined(PreviewSolidWhite): 1 else: 0
 
 type PreviewAssets = object
   showTexture: bool
@@ -74,6 +78,7 @@ type PreviewAssets = object
   useCandidateMaterialOrder: bool
   showStaticGeometry: bool
   selectedSubmodelIndex: int
+  selectedGeometryIndex: int
   modelId: uint32
   materialId: uint32
   textureId: uint32
@@ -101,6 +106,7 @@ proc parseIndex(argument, label: string): int =
     quit(label & " must be an integer", 1)
 
 proc loadPreviewAssets(): PreviewAssets =
+  result.selectedGeometryIndex = -1
   if paramCount() == 0:
     return
   if paramStr(1) == "--placements":
@@ -134,23 +140,61 @@ proc loadPreviewAssets(): PreviewAssets =
       quit("Could not load ISO static-geometry preview: " & error.msg, 1)
     return
   if paramStr(1) == "--chunk-links":
-    if paramCount() notin [3, 4, 5]:
+    if paramCount() notin [3, 4, 5, 6, 7, 8]:
       quit("Usage: main --chunk-links image.iso sm2-resource-path " &
-        "[depth [object|chunk]]", 1)
+        "[depth [object|chunk [root-link-index] " &
+        "[all|static|placements [geometry-index]]]]", 1)
     let maxDepth = if paramCount() >= 4:
       parseIndex(paramStr(4), "Chunk-link depth") else: 1
-    let useChunkMatrix = paramCount() == 5 and paramStr(5) == "chunk"
     if paramCount() == 5 and paramStr(5) notin ["object", "chunk"]:
       quit("Chunk-link matrix must be 'object' or 'chunk'", 1)
+    if paramCount() >= 6 and paramStr(5) notin ["object", "chunk"]:
+      quit("Chunk-link matrix must be 'object' or 'chunk'", 1)
+    var selectedRootLink = -1
+    var sceneMode = "all"
+    if paramCount() == 6:
+      if paramStr(6) in ["all", "static", "placements"]:
+        sceneMode = paramStr(6)
+      else:
+        selectedRootLink = parseIndex(paramStr(6), "Root chunk-link index")
+    elif paramCount() == 7:
+      selectedRootLink = parseIndex(paramStr(6), "Root chunk-link index")
+      sceneMode = paramStr(7)
+    elif paramCount() == 8:
+      selectedRootLink = parseIndex(paramStr(6), "Root chunk-link index")
+      sceneMode = paramStr(7)
+      result.selectedGeometryIndex = parseIndex(paramStr(8),
+        "Scene geometry index")
+    if sceneMode notin ["all", "static", "placements"]:
+      quit("Chunk-link scene mode must be 'all', 'static', or 'placements'", 1)
+    let matrixMode = if paramCount() >= 5: paramStr(5) else: "object"
+    let useChunkMatrix = matrixMode == "chunk"
     try:
       result.scene = loadLinkedChunkGeometryFromIso(paramStr(2), paramStr(3),
-        maxDepth, useChunkMatrix)
-      result.showStaticGeometry = true
-      result.showPlacements = result.scene.placements.len > 0
+        maxDepth, useChunkMatrix, selectedRootLink)
+      result.showStaticGeometry = sceneMode != "placements"
+      result.showPlacements = sceneMode != "static" and
+        result.scene.placements.len > 0
+      if sceneMode == "placements" and not result.showPlacements:
+        raise newException(IOError, "Selected linked chunks have no placements")
+      if result.selectedGeometryIndex >= 0 and sceneMode == "all":
+        raise newException(ValueError,
+          "Selecting scene geometry requires static or placements mode")
       var staticModelCount = 0
       for sceneModel in result.scene.models:
         if sceneModel.isStaticGeometry:
           inc staticModelCount
+      if sceneMode == "placements" and
+          result.selectedGeometryIndex >= result.scene.placements.len:
+        raise newException(ValueError, "Placement index is out of range")
+      if sceneMode == "static" and
+          result.selectedGeometryIndex >= staticModelCount:
+        raise newException(ValueError, "Static model index is out of range")
+      if sceneMode != "all":
+        fitSceneBounds(result.scene, result.showStaticGeometry,
+          result.showPlacements,
+          (if sceneMode == "static": result.selectedGeometryIndex else: -1),
+          (if sceneMode == "placements": result.selectedGeometryIndex else: -1))
       echo "Loaded ", staticModelCount,
         " linked SM2 model items across up to ", maxDepth, " link levels"
       echo "Loaded ", result.scene.models.len - staticModelCount,
@@ -160,6 +204,26 @@ proc loadPreviewAssets(): PreviewAssets =
       echo "Neighbor transforms use the experimental ",
         (if useChunkMatrix: "ChunkMatrix" else: "ObjectMatrix"),
         " interpretation"
+      if selectedRootLink >= 0:
+        echo "Following only root link ", selectedRootLink
+      echo "Drawing linked-scene mode: ", sceneMode
+      if result.selectedGeometryIndex >= 0:
+        if sceneMode == "static":
+          var staticModelIndex = 0
+          for sceneModel in result.scene.models:
+            if sceneModel.isStaticGeometry:
+              if staticModelIndex == result.selectedGeometryIndex:
+                echo "Selected static model ", staticModelIndex, ": ",
+                  sceneModel.modelId, " from ", sceneModel.modelPath
+                break
+              inc staticModelIndex
+        else:
+          let placement = result.scene.placements[result.selectedGeometryIndex]
+          let sceneModel = result.scene.models[placement.modelIndex]
+          echo "Selected placement ", result.selectedGeometryIndex,
+            ": instance ", placement.instanceId, ", object ",
+            placement.objectId, ", model ", sceneModel.modelId, " from ",
+            sceneModel.modelPath, " at ", placement.position
     except CatchableError as error:
       quit("Could not load ISO chunk-link preview: " & error.msg, 1)
     return
@@ -186,7 +250,8 @@ proc loadPreviewAssets(): PreviewAssets =
       "resource-path outer-index nested-index [record-limit] | " &
       "main --chunk image.iso sm2-resource-path | " &
       "main --chunk-links image.iso sm2-resource-path " &
-      "[depth [object|chunk]]", 1)
+      "[depth [object|chunk [root-link-index] " &
+      "[all|static|placements [geometry-index]]]]", 1)
 
   let modelId = parseId(paramStr(4), "Model ID")
   let selectedSubmodelIndex = if useSelectedSubmodel:
@@ -384,6 +449,7 @@ proc main() =
   let projectionLocation = glGetUniformLocation(shaderProgram, "uProjection")
   let textureLocation = glGetUniformLocation(shaderProgram, "uTexture")
   let useTextureLocation = glGetUniformLocation(shaderProgram, "uUseTexture")
+  let previewWhiteLocation = glGetUniformLocation(shaderProgram, "uPreviewWhite")
   var previewMesh: Mesh
   var sceneMeshes: seq[Mesh]
   var sceneTextures: seq[Texture2D]
@@ -472,6 +538,7 @@ proc main() =
     glClear(GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT)
 
     glUseProgram(shaderProgram)
+    glUniform1i(previewWhiteLocation, GLint(PreviewWhiteUniformValue))
     let time = float32(currentTime)
     # The shader applies transforms in model, view, then projection order.
     let model = if preview.showTexture and not preview.showModel:
@@ -491,7 +558,10 @@ proc main() =
     if useTexture:
       glUniform1i(textureLocation, 0)
     if preview.showPlacements:
-      for placement in preview.scene.placements:
+      for placementIndex, placement in preview.scene.placements:
+        if not preview.showStaticGeometry and preview.selectedGeometryIndex >= 0 and
+            placementIndex != preview.selectedGeometryIndex:
+          continue
         let transform = placementMatrix(placement, preview.scene)
         glUniformMatrix4fv(modelLocation, 1, GLboolean(0), transform[0].addr)
         let sceneModel = preview.scene.models[placement.modelIndex]
@@ -503,10 +573,16 @@ proc main() =
     if preview.showStaticGeometry:
       let centerTransform = translationMatrix(-preview.scene.center[0],
         -preview.scene.center[1], -preview.scene.center[2])
+      var staticModelIndex = 0
       for modelIndex in 0 ..< preview.scene.models.len:
         let sceneModel = preview.scene.models[modelIndex]
         if not sceneModel.isStaticGeometry:
           continue
+        if preview.selectedGeometryIndex >= 0 and
+            staticModelIndex != preview.selectedGeometryIndex:
+          inc staticModelIndex
+          continue
+        inc staticModelIndex
         let transform = multiply(centerTransform,
           sceneModel.modelTransform)
         glUniformMatrix4fv(modelLocation, 1, GLboolean(0), transform[0].addr)
