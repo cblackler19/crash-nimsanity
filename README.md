@@ -84,6 +84,7 @@ The repository includes these utilities:
 | `rm2_inspect` | Inspect `.RM2`/`.SM2` section tables, decode PSMT8 textures and mip levels, check model-item VIF decoding coverage and linked material/submodel count agreement, inspect material/rigid-model and placed-object records, and dump bounded hexadecimal ranges. |
 | `texture_inspect` | Load one PSMT8 texture and its mip levels through an ISO's `.BH`/`.BD` archive without extracting the resource. |
 | `model_inspect` | Decode one model's bounded VIF position, UV/color, and strip records, report per-submodel vertex/triangle counts, and list all resolving material/texture pairs. |
+| `scene_bounds` | Report decoded triangle-vertex bounds for each static model and placed object in a linked-scene candidate. |
 | `elf_mips_refs` | Find direct MIPS immediate references to strings in a supplied ELF executable. |
 
 To preview a texture in the OpenGL window, run the main executable with an ISO path, a resource path inside `CRASH.BD`, and a decimal texture ID. For example:
@@ -135,6 +136,15 @@ The preview follows the paths in SM2 root section 5, appends `.sm2`, and applies
 .\main.exe --chunk-links ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.sm2" 1 object 0 placements
 .\main.exe --chunk-links ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.sm2" 1 object 0 placements 4
 ```
+
+To inspect the per-model and per-placement bounds used by a linked-scene candidate, build and run the read-only bounds tool. The optional matrix mode selects the same `ObjectMatrix` or `ChunkMatrix` interpretation as `--chunk-links`; an optional root-link index isolates one neighbor:
+
+```powershell
+nim c --path:src --out:tools/scene_bounds tools/scene_bounds.nim
+.\tools\scene_bounds.exe ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.sm2" 1 object 0
+```
+
+The report measures decoded triangle vertices after the preview's candidate transforms. These bounds help identify large geometry contributors; they do not determine which models are visible together or validate the decoded triangle topology.
 
 The preview reads every nonempty RM2 instance group in each linked resource and draws the first loadable geometry model reached from each object's graphics-info links. In separated modes, the camera fit is recalculated from the geometry being displayed. The combined view is a diagnostic candidate set, not a reconstructed level: static model items have not been assigned their confirmed visibility, hierarchy, or per-model transforms. The transform interpretation remains experimental. Models without a resolving texture are kept and drawn using their decoded vertex colors. To build a white silhouette diagnostic that overrides texture and vertex colors, run:
 
