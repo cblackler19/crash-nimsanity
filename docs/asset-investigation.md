@@ -197,6 +197,8 @@ Other requested files provide useful boundaries for this diagnosis. [`archive.cp
 
 The user reports that the depth-2 `cavent.sm2` linked preview appears to contain almost the entire Cavern level, although it is currently too distant to confirm its exact extent. This is a promising visual observation, not proof that the renderer has reconstructed retail level visibility. The startup camera fit previously assumed scene bounds were centered at the world origin; it now centers on the decoded scene bounds and accounts for their Z offset. This should make offset linked-scene candidates easier to inspect without changing which resources or meshes are drawn.
 
+The Editor's MIT-licensed [`GraphicsInfo.cs`](https://github.com/Smartkin/twinsanity-editor/blob/master/Twinsanity/Items/Code/GraphicsInfo.cs) stores each OGI model link as a model ID paired with a joint index, rather than treating the list as competing model alternatives. The Nim reader now preserves those pairs. When an OGI has no joints and every model link targets joint 0, its loadable models are drawn together under the placement transform; this is a limited rigid-group case, not skeletal rendering. OGI alternatives still use the first loadable OGI, and jointed OGIs still use their first loadable model until the joint transform hierarchy is implemented. A depth-2 Cavent bounds audit found no placements that exercise the new multi-part case, so its visual effect there remains unverified.
+
 ## Next checks
 
 - Check whether `0xFFFF` is the empty OGI-reference sentinel across more resource chunks and identify any non-sentinel exceptions.
