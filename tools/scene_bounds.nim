@@ -125,13 +125,17 @@ proc main() =
       inc staticIndex
 
     for placementIndex, placement in scene.placements:
-      if placement.modelIndex < 0 or placement.modelIndex >= scene.models.len:
-        raise newException(IOError, "Placement model index is out of range")
-      let model = scene.models[placement.modelIndex]
-      let bounds = measure(model, placementTransform(placement))
-      echo "placement[", placementIndex, "] instance=", placement.instanceId,
-        " object=", placement.objectId, " model=", model.modelId,
-        " resource=", model.modelPath, " ", formatBounds(bounds)
+      var partIndex = 0
+      for modelIndex in placement.placementModelIndices():
+        if modelIndex < 0 or modelIndex >= scene.models.len:
+          raise newException(IOError, "Placement model index is out of range")
+        let model = scene.models[modelIndex]
+        let bounds = measure(model, placementTransform(placement))
+        echo "placement[", placementIndex, "] part=", partIndex,
+          " instance=", placement.instanceId, " object=", placement.objectId,
+          " model=", model.modelId, " resource=", model.modelPath, " ",
+          formatBounds(bounds)
+        inc partIndex
   except CatchableError as error:
     quit("Could not inspect linked scene bounds: " & error.msg, 1)
 
