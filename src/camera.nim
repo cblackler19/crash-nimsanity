@@ -23,6 +23,7 @@ type Camera* = object
   pitch*: float32
 
 const CameraMoveSpeed = 12.0'f32
+const CameraZoomStep = 6.0'f32
 
 proc initCamera*(): Camera =
   result.position = Vec3(x: 0.0'f32, y: 0.0'f32, z: 3.0'f32)
@@ -48,6 +49,19 @@ proc moveCamera*(camera: var Camera, direction: Vec3, deltaTime: float32,
   camera.position.x += relativeDirection.x * distance
   camera.position.y += relativeDirection.y * distance
   camera.position.z += relativeDirection.z * distance
+
+proc dollyCamera*(camera: var Camera, scrollSteps: float32,
+    speedMultiplier = 1.0'f32) =
+  let cosinePitch = cos(camera.pitch)
+  let forward = Vec3(
+    x: -sin(camera.yaw) * cosinePitch,
+    y: sin(camera.pitch),
+    z: -cos(camera.yaw) * cosinePitch,
+  )
+  let distance = CameraZoomStep * scrollSteps * speedMultiplier
+  camera.position.x += forward.x * distance
+  camera.position.y += forward.y * distance
+  camera.position.z += forward.z * distance
 
 proc rotateCamera*(camera: var Camera, yawDelta, pitchDelta: float32) =
   camera.yaw += yawDelta
