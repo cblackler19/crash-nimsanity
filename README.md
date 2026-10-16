@@ -44,7 +44,8 @@ Controls in the current renderer:
 
 - `W`, `A`, `S`, `D`: move relative to the camera's horizontal look direction.
 - `R`, `F`: move up and down.
-- Hold either `Shift` key while moving to travel five times faster.
+- Mouse wheel: dolly toward or away from the scene along the camera's look direction.
+- Hold either `Shift` key while moving or zooming to travel five times faster.
 - Mouse movement: look left/right and up/down. The cursor is captured while the window is open.
 - Camera movement speed: 12 world units per second.
 - `Esc`: close the window and release the cursor.
