@@ -72,6 +72,7 @@ void main() {
 
 const MouseLookSensitivity = 0.0025'f32
 const PreviewWhiteUniformValue = when defined(PreviewSolidWhite): 1 else: 0
+var pendingScroll: float64
 
 type PreviewAssets = object
   showTexture: bool
@@ -408,6 +409,11 @@ proc compileShader(kind: GLenum, source: string): GLuint =
 proc keyDown(window: GLFWWindow, key: GLFWKey): bool =
   window.getKey(key) == GLFWPress
 
+proc onScroll(window: GLFWWindow, xOffset, yOffset: float64) {.cdecl.} =
+  discard window
+  discard xOffset
+  pendingScroll += yOffset
+
 proc main() =
   let preview = loadPreviewAssets()
   if not glfwInit():
@@ -514,6 +520,7 @@ proc main() =
   glfwSwapInterval(1)
   # Disabled mode hides and captures the cursor while the preview is active.
   window.setInputMode(GLFWCursorSpecial, GLFWCursorDisabled)
+  discard window.setScrollCallback(onScroll)
   var previousCursorX, previousCursorY: float64
   window.getCursorPos(previousCursorX.addr, previousCursorY.addr)
 
@@ -550,6 +557,8 @@ proc main() =
     let speedMultiplier = if window.keyDown(GLFWKey.LeftShift) or
         window.keyDown(GLFWKey.RightShift): 5.0'f32 else: 1.0'f32
     camera.moveCamera(movement, deltaTime, speedMultiplier)
+    camera.dollyCamera(float32(pendingScroll), speedMultiplier)
+    pendingScroll = 0.0
     var cursorX, cursorY: float64
     window.getCursorPos(cursorX.addr, cursorY.addr)
     let mouseDeltaX = float32(cursorX - previousCursorX)
