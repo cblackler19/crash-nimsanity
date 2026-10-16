@@ -142,8 +142,8 @@ proc loadPreviewAssets(): PreviewAssets =
   if paramStr(1) == "--chunk-links":
     if paramCount() notin [3, 4, 5, 6, 7, 8]:
       quit("Usage: main --chunk-links image.iso sm2-resource-path " &
-        "[depth [object|chunk [root-link-index] " &
-        "[all|static|placements [geometry-index]]]]", 1)
+        "[depth [object|chunk [root-link-index]] " &
+        "[all|static|placements [geometry-index]]]", 1)
     let maxDepth = if paramCount() >= 4:
       parseIndex(paramStr(4), "Chunk-link depth") else: 1
     if paramCount() == 5 and paramStr(5) notin ["object", "chunk"]:
@@ -158,8 +158,13 @@ proc loadPreviewAssets(): PreviewAssets =
       else:
         selectedRootLink = parseIndex(paramStr(6), "Root chunk-link index")
     elif paramCount() == 7:
-      selectedRootLink = parseIndex(paramStr(6), "Root chunk-link index")
-      sceneMode = paramStr(7)
+      if paramStr(6) in ["all", "static", "placements"]:
+        sceneMode = paramStr(6)
+        result.selectedGeometryIndex = parseIndex(paramStr(7),
+          "Scene geometry index")
+      else:
+        selectedRootLink = parseIndex(paramStr(6), "Root chunk-link index")
+        sceneMode = paramStr(7)
     elif paramCount() == 8:
       selectedRootLink = parseIndex(paramStr(6), "Root chunk-link index")
       sceneMode = paramStr(7)
@@ -250,8 +255,8 @@ proc loadPreviewAssets(): PreviewAssets =
       "resource-path outer-index nested-index [record-limit] | " &
       "main --chunk image.iso sm2-resource-path | " &
       "main --chunk-links image.iso sm2-resource-path " &
-      "[depth [object|chunk [root-link-index] " &
-      "[all|static|placements [geometry-index]]]]", 1)
+      "[depth [object|chunk [root-link-index]] " &
+      "[all|static|placements [geometry-index]]]", 1)
 
   let modelId = parseId(paramStr(4), "Model ID")
   let selectedSubmodelIndex = if useSelectedSubmodel:
