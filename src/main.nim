@@ -518,6 +518,7 @@ proc main() =
       8.0'f32)
     camera.position = Vec3(x: centerX, y: centerY,
       z: centerZ + spanZ * 0.5'f32 + fitDistance + 2.0'f32)
+  let fittedCamera = camera
 
   glEnable(GL_DEPTH_TEST)
   glfwSwapInterval(1)
@@ -535,6 +536,8 @@ proc main() =
 
     if window.keyDown(GLFWKey.ESCAPE):
       window.setWindowShouldClose(true)
+    if window.keyDown(GLFWKey.Home):
+      camera = fittedCamera
 
     var width, height: int32
     # GLFW window dimensions can differ from framebuffer pixels on high-DPI displays.
