@@ -685,7 +685,7 @@ proc sameChunkInstance(a, b: ChunkTraversalEntry): bool =
       b.path.replace('/', '\\').toLowerAscii():
     return false
   for index in 0 .. 15:
-    if abs(a.transform[index] - b.transform[index]) > 1.0e-4'f32:
+    if abs(a.transform[index] - b.transform[index]) > 1.0e-3'f32:
       return false
   true
 
