@@ -21,6 +21,9 @@ type
     modelId*: uint32
     isLod*: bool
     transform*: Mat4
+    boundsMinimum*: array[3, float32]
+    boundsMaximum*: array[3, float32]
+    hasBounds*: bool
 
   ScenerySection* = object
     hasRoot*: bool
@@ -47,6 +50,9 @@ proc readU32LE(data: openArray[uint8], offset, limit: int): uint32 =
     (uint32(data[offset + 1]) shl 8) or
     (uint32(data[offset + 2]) shl 16) or
     (uint32(data[offset + 3]) shl 24)
+
+proc readF32LE(data: openArray[uint8], offset, limit: int): float32 =
+  cast[float32](readU32LE(data, offset, limit))
 
 proc skipBytes(cursor: var int, amount, limit: int) =
   if amount < 0 or cursor < 0 or cursor > limit - amount:
@@ -105,6 +111,21 @@ proc readSceneryCell(data: openArray[uint8], cursor: var int, limit: int,
     let itemCount = meshCount + lodCount
     if uint64(itemCount) * 32'u64 > uint64(limit - cursor):
       raise newException(IOError, "Scenery item bounds exceed their section")
+    var boundsMinimum = newSeq[array[3, float32]](itemCount)
+    var boundsMaximum = newSeq[array[3, float32]](itemCount)
+    for index in 0 ..< itemCount:
+      let boundsOffset = cursor + index * 32
+      for axis in 0 .. 2:
+        boundsMinimum[index][axis] = readF32LE(data,
+          boundsOffset + axis * 4, limit)
+        boundsMaximum[index][axis] = readF32LE(data,
+          boundsOffset + 16 + axis * 4, limit)
+        if boundsMinimum[index][axis] != boundsMinimum[index][axis] or
+            boundsMaximum[index][axis] != boundsMaximum[index][axis] or
+            abs(boundsMinimum[index][axis]) >= 1.0e20'f32 or
+            abs(boundsMaximum[index][axis]) >= 1.0e20'f32 or
+            boundsMinimum[index][axis] > boundsMaximum[index][axis]:
+          raise newException(IOError, "Scenery item has invalid bounds")
     skipBytes(cursor, itemCount * 32, limit)
 
     let idBytes = uint64(itemCount) * 4'u64
@@ -120,6 +141,9 @@ proc readSceneryCell(data: openArray[uint8], cursor: var int, limit: int,
         modelId: modelId,
         isLod: index >= meshCount,
         transform: matrixAt(data, cursor + index * 64, limit),
+        boundsMinimum: boundsMinimum[index],
+        boundsMaximum: boundsMaximum[index],
+        hasBounds: true,
       ))
     cursor += int(matrixBytes)
   elif meshKind != SceneryNoMeshes:
