@@ -27,7 +27,8 @@ const CameraMoveSpeed = 12.0'f32
 proc initCamera*(): Camera =
   result.position = Vec3(x: 0.0'f32, y: 0.0'f32, z: 3.0'f32)
 
-proc moveCamera*(camera: var Camera, direction: Vec3, deltaTime: float32) =
+proc moveCamera*(camera: var Camera, direction: Vec3, deltaTime: float32,
+    speedMultiplier = 1.0'f32) =
   # Horizontal input follows camera yaw while vertical input stays world-aligned.
   let cosine = cos(camera.yaw)
   let sine = sin(camera.yaw)
@@ -43,7 +44,7 @@ proc moveCamera*(camera: var Camera, direction: Vec3, deltaTime: float32) =
     return
 
   # Scale by the input length so diagonal movement is no faster than straight movement.
-  let distance = CameraMoveSpeed * deltaTime / length
+  let distance = CameraMoveSpeed * speedMultiplier * deltaTime / length
   camera.position.x += relativeDirection.x * distance
   camera.position.y += relativeDirection.y * distance
   camera.position.z += relativeDirection.z * distance
