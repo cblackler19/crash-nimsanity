@@ -60,6 +60,8 @@ proc matrixAt(data: openArray[uint8], offset, limit: int): Mat4 =
     for column in 0 .. 3:
       let bits = readU32LE(data, offset + (row * 4 + column) * 4, limit)
       result[column * 4 + row] = cast[float32](bits)
+  # The Editor reflects scenery positions across X after applying this matrix.
+  result[12] = -result[12]
 
 proc skipSceneryLights(data: openArray[uint8], cursor: var int, limit: int) =
   skipBytes(cursor, SceneryLightReferencesBytes, limit)
