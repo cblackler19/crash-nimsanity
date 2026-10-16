@@ -789,11 +789,72 @@ proc placementLocalTransform(placement: ScenePlacement): Mat4 =
   multiply(translationMatrix(placement.position[0], placement.position[1],
     placement.position[2]), rotation)
 
+proc fitSceneBounds*(scene: var ScenePreview, includeStaticGeometry,
+    includePlacements: bool, selectedStaticModelIndex = -1,
+    selectedPlacementIndex = -1) =
+  ## Fit the preview to the geometry that its current draw mode will show.
+  var hasBounds = false
+  if includeStaticGeometry:
+    var staticModelIndex = 0
+    for sceneModel in scene.models:
+      if not sceneModel.isStaticGeometry:
+        continue
+      if selectedStaticModelIndex >= 0 and
+          staticModelIndex != selectedStaticModelIndex:
+        inc staticModelIndex
+        continue
+      for vertex in sceneModel.model.vertices:
+        let worldPosition = transformPoint(sceneModel.modelTransform,
+          vertex.position)
+        if not hasBounds:
+          scene.minimum = worldPosition
+          scene.maximum = worldPosition
+          hasBounds = true
+        else:
+          for axis in 0 .. 2:
+            scene.minimum[axis] = min(scene.minimum[axis], worldPosition[axis])
+            scene.maximum[axis] = max(scene.maximum[axis], worldPosition[axis])
+      inc staticModelIndex
+    if selectedStaticModelIndex >= staticModelIndex:
+      raise newException(ValueError, "Static model index is out of range")
+
+  if includePlacements:
+    if selectedPlacementIndex >= scene.placements.len:
+      raise newException(ValueError, "Placement index is out of range")
+    for placementIndex, placement in scene.placements:
+      if selectedPlacementIndex >= 0 and
+          placementIndex != selectedPlacementIndex:
+        continue
+      if placement.modelIndex < 0 or placement.modelIndex >= scene.models.len:
+        raise newException(IOError, "Placement model index is out of range")
+      let modelTransform = multiply(placement.chunkTransform,
+        placementLocalTransform(placement))
+      let placedModel = scene.models[placement.modelIndex].model
+      for vertex in placedModel.vertices:
+        let worldPosition = transformPoint(modelTransform, vertex.position)
+        if not hasBounds:
+          scene.minimum = worldPosition
+          scene.maximum = worldPosition
+          hasBounds = true
+        else:
+          for axis in 0 .. 2:
+            scene.minimum[axis] = min(scene.minimum[axis], worldPosition[axis])
+            scene.maximum[axis] = max(scene.maximum[axis], worldPosition[axis])
+
+  if not hasBounds:
+    raise newException(IOError, "Selected preview mode has no geometry bounds")
+  for axis in 0 .. 2:
+    scene.center[axis] = (scene.minimum[axis] + scene.maximum[axis]) * 0.5'f32
+
 proc loadLinkedChunkGeometryFromIso*(imagePath, resourcePath: string,
-    maxDepth: int, useChunkMatrix = false): ScenePreview =
+    maxDepth: int, useChunkMatrix = false,
+    selectedRootLink = -1): ScenePreview =
   ## Load linked SM2 chunks using one explicitly selected link-matrix candidate.
   if maxDepth < 0 or maxDepth > 2:
     raise newException(ValueError, "Chunk-link depth must be between 0 and 2")
+  if selectedRootLink >= 0 and maxDepth == 0:
+    raise newException(ValueError,
+      "Selecting a root link requires a positive chunk-link depth")
 
   type PendingChunk = tuple[path: string, transform: Mat4, depth: int]
   var pending: seq[PendingChunk] = @[(resourcePath, identityMatrix(), 0)]
@@ -872,7 +933,13 @@ proc loadLinkedChunkGeometryFromIso*(imagePath, resourcePath: string,
 
     if current.depth >= maxDepth:
       continue
-    for link in readChunkLinksFromIso(imagePath, current.path):
+    let links = readChunkLinksFromIso(imagePath, current.path)
+    if current.depth == 0 and selectedRootLink >= links.len:
+      raise newException(ValueError, "Root chunk-link index is out of range")
+    for linkIndex, link in links:
+      if current.depth == 0 and selectedRootLink >= 0 and
+          linkIndex != selectedRootLink:
+        continue
       var targetPath = link.path
       if not targetPath.toLowerAscii().endsWith(".sm2"):
         targetPath.add(".sm2")
