@@ -109,13 +109,13 @@ To preview the first 32 object placements from a resource instance group, pass t
 
 Add a final integer to change the record limit. For each placement, the preview draws the first loadable geometry model reached through the object's graphics-info links at the stored position and rotation, and centers the camera on the selected positions. Other candidates are omitted until their relationship to the object transform is established. Candidates without a resolving texture are rendered with their decoded vertex colors. Primary 16-bit rotation words are treated as turns with 65,536 units per revolution and composed in XYZ Euler order; the companion `COMRot` words are ignored. Instance relationships and game-accurate transforms are not applied.
 
-To draw all model items in a paired `.SM2` resource together, use the experimental chunk-geometry view:
+To draw a chunk's static scenery from its SM2 section-0 draw list, use the experimental chunk-geometry view:
 
 ```powershell
 .\main.exe --chunk ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.sm2"
 ```
 
-This mode draws decoded vertex positions and centers the camera on their combined bounds. It does not infer additional transforms, split a model across its material links, or establish that the result is a complete level scene. It is intended to inspect the paired static-model geometry while those relationships are investigated.
+This mode reads the section-0 scenery hierarchy, resolves its rigid-model references through the ISO's graphics tables, and applies each mesh's stored 4×4 transform. It skips LOD entries and does not yet use the stored bounds for visibility culling. The linked-scene preview composes these per-mesh transforms with its selected experimental chunk-link transform; linked-chunk visibility and portal rules are not implemented.
 
 To include linked chunks, run `--chunk-links` with the same resource path. The optional depth defaults to one link level and accepts values from 0 through 2:
 
@@ -123,7 +123,7 @@ To include linked chunks, run `--chunk-links` with the same resource path. The o
 .\main.exe --chunk-links ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.sm2"
 ```
 
-The preview follows the paths in SM2 root section 5, appends `.sm2`, and applies each link's `ObjectMatrix` by default to static-model candidates and RM2 placements. The matrix can be switched to `ChunkMatrix`; an optional zero-based root-link index follows only one neighbor. Static geometry and placements can be shown separately, and a final zero-based index isolates one static model or placement:
+The preview follows the paths in SM2 root section 5, appends `.sm2`, and applies each link's `ObjectMatrix` by default to static scenery meshes and RM2 placements. The matrix can be switched to `ChunkMatrix`; an optional zero-based root-link index follows only one neighbor. Static geometry and placements can be shown separately, and a final zero-based index isolates one static mesh or placement:
 
 ```powershell
 # Show only static model candidates from root and root link 0
@@ -146,7 +146,7 @@ nim c --path:src --out:tools/scene_bounds tools/scene_bounds.nim
 
 The report measures decoded triangle vertices after the preview's candidate transforms. These bounds help identify large geometry contributors; they do not determine which models are visible together or validate the decoded triangle topology.
 
-The preview reads every nonempty RM2 instance group in each linked resource and draws the first loadable geometry model reached from each object's graphics-info links. In separated modes, the camera fit is recalculated from the geometry being displayed. The combined view is a diagnostic candidate set, not a reconstructed level: static model items have not been assigned their confirmed visibility, hierarchy, or per-model transforms. The transform interpretation remains experimental. Models without a resolving texture are kept and drawn using their decoded vertex colors. To build a white silhouette diagnostic that overrides texture and vertex colors, run:
+The preview reads every nonempty RM2 instance group in each linked resource and draws the first loadable geometry model reached from each object's graphics-info links. In separated modes, the camera fit is recalculated from the geometry being displayed. Static meshes now come from the SM2 section-0 scenery draw list with their stored per-item transforms. The combined view remains a diagnostic candidate set rather than a reconstructed level: cell culling, LOD selection, linked-chunk visibility, and game-accurate material rendering are incomplete, and transform axis conversion still needs visual validation. Models without a resolving texture are kept and drawn using their decoded vertex colors. To build a white silhouette diagnostic that overrides texture and vertex colors, run:
 
 ```powershell
 nim c --path:src --nimcache:nimcache/white --out:main-white.exe -d:release -d:PreviewSolidWhite src/main.nim
