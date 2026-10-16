@@ -45,6 +45,11 @@ type
     objectMatrix: Mat4
     chunkMatrix: Mat4
 
+  ChunkTraversalEntry = object
+    path: string
+    transform: Mat4
+    depth: int
+
   SceneModel* = object
     modelId*: uint32
     modelPath*: string
@@ -675,6 +680,21 @@ proc transformPoint(matrix: Mat4, position: array[3, float32]): array[3, float32
     result[row] = matrix[row] * position[0] + matrix[4 + row] * position[1] +
       matrix[8 + row] * position[2] + matrix[12 + row]
 
+proc sameChunkInstance(a, b: ChunkTraversalEntry): bool =
+  if a.path.replace('/', '\\').toLowerAscii() !=
+      b.path.replace('/', '\\').toLowerAscii():
+    return false
+  for index in 0 .. 15:
+    if abs(a.transform[index] - b.transform[index]) > 1.0e-4'f32:
+      return false
+  true
+
+proc containsChunkInstance(entries: openArray[ChunkTraversalEntry],
+    candidate: ChunkTraversalEntry): bool =
+  for entry in entries:
+    if sameChunkInstance(entry, candidate):
+      return true
+
 proc loadStaticGeometryFromIso*(imagePath, resourcePath: string): ScenePreview =
   ## Load the SM2 scenery draw list and apply each stored per-item transform.
   if not resourcePath.toLowerAscii().endsWith(".sm2"):
@@ -916,9 +936,9 @@ proc loadLinkedChunkGeometryFromIso*(imagePath, resourcePath: string,
     raise newException(ValueError,
       "Selecting a root link requires a positive chunk-link depth")
 
-  type PendingChunk = tuple[path: string, transform: Mat4, depth: int]
-  var pending: seq[PendingChunk] = @[(resourcePath, identityMatrix(), 0)]
-  var visited = initHashSet[string]()
+  var pending = @[ChunkTraversalEntry(path: resourcePath,
+    transform: identityMatrix(), depth: 0)]
+  var visited: seq[ChunkTraversalEntry]
   var hasBounds = false
   result.staticGeometry = true
 
@@ -928,10 +948,9 @@ proc loadLinkedChunkGeometryFromIso*(imagePath, resourcePath: string,
       raise newException(IOError, "Chunk-link traversal exceeds 64 resources")
     let current = pending[pendingIndex]
     inc pendingIndex
-    let currentKey = current.path.replace('/', '\\').toLowerAscii()
-    if currentKey in visited:
+    if visited.containsChunkInstance(current):
       continue
-    visited.incl(currentKey)
+    visited.add(current)
 
     var chunk: ScenePreview
     try:
@@ -1005,12 +1024,13 @@ proc loadLinkedChunkGeometryFromIso*(imagePath, resourcePath: string,
       var targetPath = link.path
       if not targetPath.toLowerAscii().endsWith(".sm2"):
         targetPath.add(".sm2")
-      let targetKey = targetPath.replace('/', '\\').toLowerAscii()
-      if targetKey in visited:
-        continue
       let linkTransform = if useChunkMatrix: link.chunkMatrix else: link.objectMatrix
-      pending.add((targetPath, multiply(current.transform, linkTransform),
-        current.depth + 1))
+      let target = ChunkTraversalEntry(path: targetPath,
+        transform: multiply(current.transform, linkTransform),
+        depth: current.depth + 1)
+      if not visited.containsChunkInstance(target) and
+          not pending.containsChunkInstance(target):
+        pending.add(target)
 
   if result.models.len == 0 or not hasBounds:
     raise newException(IOError, "No linked SM2 geometry could be loaded")
