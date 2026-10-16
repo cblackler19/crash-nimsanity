@@ -39,6 +39,14 @@ type
     resourcePath: string
     geometryModelId: uint32
 
+  OgiModelLink = object
+    jointIndex: uint8
+    rigidModelId: uint32
+
+  OgiRecord = object
+    jointCount: int
+    modelLinks: seq[OgiModelLink]
+
   ChunkLink = object
     path: string
     linkType: uint32
@@ -68,6 +76,7 @@ type
     instanceId*: uint32
     objectId*: uint16
     modelIndex*: int
+    additionalModelIndices*: seq[int]
     chunkTransform*: Mat4
     position*: array[3, float32]
     rotations*: array[6, uint16]
@@ -79,6 +88,11 @@ type
     center*: array[3, float32]
     minimum*: array[3, float32]
     maximum*: array[3, float32]
+
+iterator placementModelIndices*(placement: ScenePlacement): int =
+  yield placement.modelIndex
+  for modelIndex in placement.additionalModelIndices:
+    yield modelIndex
 
 proc readU16LE(data: openArray[uint8], offset: int): uint16 =
   if offset < 0 or offset > data.len - 2:
@@ -284,8 +298,8 @@ proc parseObjectOgiLinks(sectionData: openArray[uint8]): Table[uint32, seq[uint1
       result.mgetOrPut(itemId, @[]).add(
         readU16LE(sectionData, cursor + linkIndex * 2))
 
-proc parseOgiModels(sectionData: openArray[uint8]): Table[uint32, seq[uint32]] =
-  result = initTable[uint32, seq[uint32]]()
+proc parseOgiModels(sectionData: openArray[uint8]): Table[uint32, OgiRecord] =
+  result = initTable[uint32, OgiRecord]()
   if sectionData.len < 12:
     raise newException(IOError, "OGI table is shorter than its header")
   let itemCount = readU32LE(sectionData, 4)
@@ -316,12 +330,17 @@ proc parseOgiModels(sectionData: openArray[uint8]): Table[uint32, seq[uint32]] =
     cursor += int(transformBytes)
     if modelCount > limit - cursor:
       raise newException(IOError, "OGI joint indices exceed its record")
+    var modelLinks = newSeq[OgiModelLink](modelCount)
+    for modelIndex in 0 ..< modelCount:
+      modelLinks[modelIndex].jointIndex = sectionData[cursor + modelIndex]
     cursor += modelCount
     if uint64(modelCount) * 4'u64 > uint64(limit - cursor):
       raise newException(IOError, "OGI model IDs exceed its record")
     for modelIndex in 0 ..< modelCount:
-      result.mgetOrPut(itemId, @[]).add(
-        readU32LE(sectionData, cursor + modelIndex * 4))
+      modelLinks[modelIndex].rigidModelId =
+        readU32LE(sectionData, cursor + modelIndex * 4)
+    result[itemId] = OgiRecord(jointCount: jointCount,
+      modelLinks: modelLinks)
 
 proc collectArchiveModels(image: IsoImage, dataFile: IsoEntry,
     indexData: openArray[uint8]): tuple[modelPaths: Table[uint32, string],
@@ -398,9 +417,9 @@ proc collectArchiveModels(image: IsoImage, dataFile: IsoEntry,
 proc readCodeTables(image: IsoImage, dataFile: IsoEntry, resourceOffset: int64,
     sections: openArray[SectionRange]): tuple[
     objectOgis: Table[uint32, seq[uint16]],
-    ogiModels: Table[uint32, seq[uint32]]] =
+    ogiModels: Table[uint32, OgiRecord]] =
   result.objectOgis = initTable[uint32, seq[uint16]]()
-  result.ogiModels = initTable[uint32, seq[uint32]]()
+  result.ogiModels = initTable[uint32, OgiRecord]()
   for rootSection in sections:
     if rootSection.id != 10:
       continue
@@ -508,12 +527,20 @@ proc loadPlacementModelsFromIso*(imagePath, resourcePath: string,
       raise newException(IOError, "Object-instance identity fields are truncated")
     let objectId = readU16LE(instanceData, cursor)
     let linkedOgis = codeTables.objectOgis.getOrDefault(uint32(objectId), @[])
-    var selectedModelIndex = -1
+    var selectedModelIndices: seq[int]
 
     for ogiId in linkedOgis:
       if ogiId == high(uint16):
         continue
-      for rigidId in codeTables.ogiModels.getOrDefault(uint32(ogiId), @[]):
+      let ogi = codeTables.ogiModels.getOrDefault(uint32(ogiId), OgiRecord())
+      var sharedRootJoint = ogi.jointCount == 0
+      for modelLink in ogi.modelLinks:
+        if modelLink.jointIndex != 0:
+          sharedRootJoint = false
+          break
+      var modelsFromOgi: seq[int]
+      for modelLink in ogi.modelLinks:
+        let rigidId = modelLink.rigidModelId
         if rigidId notin archiveModels.rigidModels:
           continue
         let rigidLocation = archiveModels.rigidModels[rigidId]
@@ -529,8 +556,10 @@ proc loadPlacementModelsFromIso*(imagePath, resourcePath: string,
         let modelKey = modelPath.toLowerAscii() & ":" & $geometryId & ":" &
           rigidLocation.resourcePath.toLowerAscii() & ":" & $rigidId
         if modelKey in loadedModels:
-          selectedModelIndex = loadedModels[modelKey]
-          break
+          modelsFromOgi.add(loadedModels[modelKey])
+          if not sharedRootJoint:
+            break
+          continue
         try:
           var sceneModel = SceneModel(
             modelId: geometryId,
@@ -550,20 +579,26 @@ proc loadPlacementModelsFromIso*(imagePath, resourcePath: string,
               " has no resolving texture; drawing decoded vertex colors: ",
               error.msg
 
-          selectedModelIndex = result.models.len
+          let modelIndex = result.models.len
           result.models.add(sceneModel)
-          loadedModels[modelKey] = selectedModelIndex
+          loadedModels[modelKey] = modelIndex
+          modelsFromOgi.add(modelIndex)
           if sceneModel.hasTexture:
             echo "Placement model ", geometryId, " from ", modelPath,
               " using texture ", sceneModel.textureId, " in ",
               rigidLocation.resourcePath
-          break
         except CatchableError as error:
           echo "Skipping model candidate ", geometryId, ": ", error.msg
-      if selectedModelIndex >= 0:
+        if not sharedRootJoint and modelsFromOgi.len > 0:
+          break
+      if modelsFromOgi.len > 0:
+        if sharedRootJoint:
+          selectedModelIndices = modelsFromOgi
+        else:
+          selectedModelIndices.add(modelsFromOgi[0])
         break
 
-    if selectedModelIndex < 0:
+    if selectedModelIndices.len == 0:
       echo "Placement record ", instanceId, " (object ", objectId,
         ") has no loadable model candidate"
       continue
@@ -571,7 +606,9 @@ proc loadPlacementModelsFromIso*(imagePath, resourcePath: string,
     result.placements.add(ScenePlacement(
       instanceId: instanceId,
       objectId: objectId,
-      modelIndex: selectedModelIndex,
+      modelIndex: selectedModelIndices[0],
+      additionalModelIndices: if selectedModelIndices.len > 1:
+        selectedModelIndices[1 .. ^1] else: @[],
       chunkTransform: identityMatrix(),
       position: position,
       rotations: rotations
@@ -658,6 +695,8 @@ proc loadPlacementGroupsFromIso(imagePath, resourcePath: string,
       for placement in groupScene.placements:
         var merged = placement
         merged.modelIndex = modelRemap[placement.modelIndex]
+        for additionalIndex in merged.additionalModelIndices.mitems:
+          additionalIndex = modelRemap[additionalIndex]
         result.placements.add(merged)
       echo "Loaded placement group ", group.outerIndex, "/",
         group.nestedIndex, ": ", groupScene.placements.len,
@@ -915,17 +954,20 @@ proc fitSceneBounds*(scene: var ScenePreview, includeStaticGeometry,
         raise newException(IOError, "Placement model index is out of range")
       let modelTransform = multiply(placement.chunkTransform,
         placementLocalTransform(placement))
-      let placedModel = scene.models[placement.modelIndex].model
-      for vertex in placedModel.vertices:
-        let worldPosition = transformPoint(modelTransform, vertex.position)
-        if not hasBounds:
-          scene.minimum = worldPosition
-          scene.maximum = worldPosition
-          hasBounds = true
-        else:
-          for axis in 0 .. 2:
-            scene.minimum[axis] = min(scene.minimum[axis], worldPosition[axis])
-            scene.maximum[axis] = max(scene.maximum[axis], worldPosition[axis])
+      for modelIndex in placement.placementModelIndices():
+        if modelIndex < 0 or modelIndex >= scene.models.len:
+          raise newException(IOError, "Placement model index is out of range")
+        let placedModel = scene.models[modelIndex].model
+        for vertex in placedModel.vertices:
+          let worldPosition = transformPoint(modelTransform, vertex.position)
+          if not hasBounds:
+            scene.minimum = worldPosition
+            scene.maximum = worldPosition
+            hasBounds = true
+          else:
+            for axis in 0 .. 2:
+              scene.minimum[axis] = min(scene.minimum[axis], worldPosition[axis])
+              scene.maximum[axis] = max(scene.maximum[axis], worldPosition[axis])
 
   if not hasBounds:
     raise newException(IOError, "Selected preview mode has no geometry bounds")
@@ -1001,18 +1043,19 @@ proc loadLinkedChunkGeometryFromIso*(imagePath, resourcePath: string,
         # Fit the camera around the rotated mesh, not just its placement origin.
         let modelTransform = multiply(current.transform,
           placementLocalTransform(placement))
-        let placedModel = placementScene.models[placement.modelIndex].model
-        for vertex in placedModel.vertices:
-          let worldPosition = transformPoint(modelTransform, vertex.position)
-          if not hasBounds:
-            for axis in 0 .. 2:
-              result.minimum[axis] = worldPosition[axis]
-              result.maximum[axis] = worldPosition[axis]
-            hasBounds = true
-          else:
-            for axis in 0 .. 2:
-              result.minimum[axis] = min(result.minimum[axis], worldPosition[axis])
-              result.maximum[axis] = max(result.maximum[axis], worldPosition[axis])
+        for modelIndex in placement.placementModelIndices():
+          let placedModel = placementScene.models[modelIndex].model
+          for vertex in placedModel.vertices:
+            let worldPosition = transformPoint(modelTransform, vertex.position)
+            if not hasBounds:
+              for axis in 0 .. 2:
+                result.minimum[axis] = worldPosition[axis]
+                result.maximum[axis] = worldPosition[axis]
+              hasBounds = true
+            else:
+              for axis in 0 .. 2:
+                result.minimum[axis] = min(result.minimum[axis], worldPosition[axis])
+                result.maximum[axis] = max(result.maximum[axis], worldPosition[axis])
       echo "Loaded ", placementScene.placements.len,
         " RM2 object model instances from ", rm2Path
     except CatchableError as error:
