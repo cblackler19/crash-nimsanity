@@ -56,12 +56,19 @@ proc skipBytes(cursor: var int, amount, limit: int) =
 proc matrixAt(data: openArray[uint8], offset, limit: int): Mat4 =
   if offset < 0 or offset > limit - 64 or limit > data.len:
     raise newException(IOError, "Scenery matrix exceeds its section")
+  var rows: array[4, array[4, float32]]
   for row in 0 .. 3:
     for column in 0 .. 3:
       let bits = readU32LE(data, offset + (row * 4 + column) * 4, limit)
-      result[column * 4 + row] = cast[float32](bits)
-  # The Editor reflects scenery positions across X after applying this matrix.
-  result[12] = -result[12]
+      rows[row][column] = cast[float32](bits)
+
+  # Match ModelController's vertex-X flip and SMViewer's row-vector matrix setup.
+  result = [
+    -rows[0][0], -rows[1][0], -rows[2][0], -rows[0][3],
+     rows[0][1],  rows[1][1],  rows[2][1],  rows[1][3],
+     rows[0][2],  rows[1][2],  rows[2][2],  rows[2][3],
+    -rows[3][0],  rows[3][1],  rows[3][2],  rows[3][3],
+  ]
 
 proc skipSceneryLights(data: openArray[uint8], cursor: var int, limit: int) =
   skipBytes(cursor, SceneryLightReferencesBytes, limit)
