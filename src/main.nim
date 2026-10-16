@@ -230,7 +230,12 @@ proc loadPreviewAssets(): PreviewAssets =
           echo "Selected placement ", result.selectedGeometryIndex,
             ": instance ", placement.instanceId, ", object ",
             placement.objectId, ", model ", sceneModel.modelId, " from ",
-            sceneModel.modelPath, " at ", placement.position
+            sceneModel.modelPath, " at ", placement.position,
+            if placement.additionalModelIndices.len > 0:
+              ", plus " & $placement.additionalModelIndices.len &
+                " rigid-model parts from the same joint-free OGI"
+            else:
+              ""
     except CatchableError as error:
       quit("Could not load ISO chunk-link preview: " & error.msg, 1)
     return
@@ -608,16 +613,17 @@ proc main() =
             placementIndex != preview.selectedGeometryIndex:
           continue
         let transform = placementMatrix(placement, preview.scene)
-        if outsideClipFrustum(multiply(viewProjection, transform),
-            sceneBounds[placement.modelIndex]):
-          continue
-        glUniformMatrix4fv(modelLocation, 1, GLboolean(0), transform[0].addr)
-        let sceneModel = preview.scene.models[placement.modelIndex]
-        glUniform1i(useTextureLocation,
-          GLint(if sceneModel.hasTexture: 1 else: 0))
-        if sceneModel.hasTexture:
-          sceneTextures[placement.modelIndex].bindTexture()
-        sceneMeshes[placement.modelIndex].draw()
+        let clipTransform = multiply(viewProjection, transform)
+        for modelIndex in placement.placementModelIndices():
+          if outsideClipFrustum(clipTransform, sceneBounds[modelIndex]):
+            continue
+          glUniformMatrix4fv(modelLocation, 1, GLboolean(0), transform[0].addr)
+          let sceneModel = preview.scene.models[modelIndex]
+          glUniform1i(useTextureLocation,
+            GLint(if sceneModel.hasTexture: 1 else: 0))
+          if sceneModel.hasTexture:
+            sceneTextures[modelIndex].bindTexture()
+          sceneMeshes[modelIndex].draw()
     if preview.showStaticGeometry:
       let centerTransform = translationMatrix(-preview.scene.center[0],
         -preview.scene.center[1], -preview.scene.center[2])
