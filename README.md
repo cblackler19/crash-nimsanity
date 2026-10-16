@@ -122,7 +122,25 @@ To include linked chunks, run `--chunk-links` with the same resource path. The o
 .\main.exe --chunk-links ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.sm2"
 ```
 
-The preview follows the paths in SM2 root section 5, appends `.sm2`, and applies each link's `ObjectMatrix` to its static models and RM2 placements. It reads every nonempty RM2 instance group in each linked resource and draws the first loadable geometry model reached from each object's graphics-info links. The transform interpretation remains experimental. Models without a resolving texture are kept and drawn using their decoded vertex colors.
+The preview follows the paths in SM2 root section 5, appends `.sm2`, and applies each link's `ObjectMatrix` by default to static-model candidates and RM2 placements. The matrix can be switched to `ChunkMatrix`; an optional zero-based root-link index follows only one neighbor. Static geometry and placements can be shown separately, and a final zero-based index isolates one static model or placement:
+
+```powershell
+# Show only static model candidates from root and root link 0
+.\main.exe --chunk-links ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.sm2" 1 object 0 static
+
+# Isolate static model index 3 in the same linked view
+.\main.exe --chunk-links ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.sm2" 1 object 0 static 3
+
+# Show the placed objects only, or isolate placement index 4
+.\main.exe --chunk-links ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.sm2" 1 object 0 placements
+.\main.exe --chunk-links ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.sm2" 1 object 0 placements 4
+```
+
+The preview reads every nonempty RM2 instance group in each linked resource and draws the first loadable geometry model reached from each object's graphics-info links. In separated modes, the camera fit is recalculated from the geometry being displayed. The combined view is a diagnostic candidate set, not a reconstructed level: static model items have not been assigned their confirmed visibility, hierarchy, or per-model transforms. The transform interpretation remains experimental. Models without a resolving texture are kept and drawn using their decoded vertex colors. To build a white silhouette diagnostic that overrides texture and vertex colors, run:
+
+```powershell
+nim c --path:src --nimcache:nimcache/white --out:main-white.exe -d:release -d:PreviewSolidWhite src/main.nim
+```
 
 For models where the number of resolved material links matches the number of submodels, the renderer can try assigning those links to submodels in list order. This is an unverified format hypothesis and is enabled only by the explicit flag:
 
