@@ -365,6 +365,17 @@ proc placementMatrix(placement: ScenePlacement,
     -scene.center[1], -scene.center[2])
   multiply(centerTransform, regionTransform)
 
+proc sceneFarPlane(camera: Camera, scene: ScenePreview): float32 =
+  let halfX = (scene.maximum[0] - scene.minimum[0]) * 0.5'f32
+  let halfY = (scene.maximum[1] - scene.minimum[1]) * 0.5'f32
+  let halfZ = (scene.maximum[2] - scene.minimum[2]) * 0.5'f32
+  let sceneRadius = sqrt(halfX * halfX + halfY * halfY + halfZ * halfZ)
+  let cameraDistance = sqrt(camera.position.x * camera.position.x +
+    camera.position.y * camera.position.y +
+    camera.position.z * camera.position.z)
+  # The scene is centered at the origin; this sphere encloses it from any view.
+  max(100.0'f32, cameraDistance + sceneRadius + 1.0'f32)
+
 proc compileShader(kind: GLenum, source: string): GLuint =
   result = glCreateShader(kind)
 
@@ -474,7 +485,6 @@ proc main() =
   elif preview.showTexture:
     previewTexture = uploadTexture2D(preview.texture)
   var camera = initCamera()
-  var projectionFar = 100.0'f32
   if preview.showPlacements or preview.showStaticGeometry:
     let spanX = preview.scene.maximum[0] - preview.scene.minimum[0]
     let spanY = preview.scene.maximum[1] - preview.scene.minimum[1]
@@ -485,7 +495,6 @@ proc main() =
       8.0'f32)
     camera.position = Vec3(x: 0.0'f32, y: 0.0'f32,
       z: spanZ * 0.5'f32 + fitDistance + 2.0'f32)
-    projectionFar = max(100.0'f32, camera.position.z * 4.0'f32 + spanZ)
 
   glEnable(GL_DEPTH_TEST)
   glfwSwapInterval(1)
@@ -547,6 +556,10 @@ proc main() =
       multiply(rotationMatrixY(time * 0.7'f32), rotationMatrixX(time * 0.5'f32))
     let view = camera.viewMatrix()
     let aspect = if width > 0 and height > 0: float32(width) / float32(height) else: 1.0'f32
+    let projectionFar = if preview.showPlacements or preview.showStaticGeometry:
+      sceneFarPlane(camera, preview.scene)
+    else:
+      100.0'f32
     let projection = perspectiveMatrix(45.0'f32 * PI.float32 / 180.0'f32,
       aspect, 0.1'f32, projectionFar)
 
