@@ -15,24 +15,15 @@
 # PERFORMANCE OF THIS SOFTWARE.
 #
 /gamefiles/
-/main.exe
-/main_*.exe
+*.exe
 /nimcache/
 /tools/iso9660_inspect
-/tools/iso9660_inspect.exe
 /tools/bh_inspect
-/tools/bh_inspect.exe
 /tools/mh_inspect
-/tools/mh_inspect.exe
 /tools/elf_mips_refs
-/tools/elf_mips_refs.exe
 /tools/rm2_inspect
-/tools/rm2_inspect.exe
 /tools/texture_inspect
-/tools/texture_inspect.exe
 /tools/model_inspect
-/tools/model_inspect.exe
 /tools/mh_audio_export
-/tools/mh_audio_export.exe
 /candidate.wav
 /music-record-*.wav
