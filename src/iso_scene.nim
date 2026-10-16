@@ -58,6 +58,9 @@ type
     hasTexture*: bool
     isStaticGeometry*: bool
     modelTransform*: Mat4
+    hasSceneryBounds*: bool
+    sceneryBoundsMinimum*: array[3, float32]
+    sceneryBoundsMaximum*: array[3, float32]
     model*: DecodedModel
     texture*: DecodedTexture
 
@@ -832,6 +835,9 @@ proc loadStaticGeometryFromIso*(imagePath, resourcePath: string): ScenePreview =
     if geometryModelId in loadedModels:
       var sceneModel = loadedModels[geometryModelId]
       sceneModel.modelTransform = reference.transform
+      sceneModel.hasSceneryBounds = reference.hasBounds
+      sceneModel.sceneryBoundsMinimum = reference.boundsMinimum
+      sceneModel.sceneryBoundsMaximum = reference.boundsMaximum
       result.models.add(sceneModel)
 
   echo "SM2 scenery instances: ", result.models.len,
