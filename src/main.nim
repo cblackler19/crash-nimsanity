@@ -509,12 +509,15 @@ proc main() =
     let spanX = preview.scene.maximum[0] - preview.scene.minimum[0]
     let spanY = preview.scene.maximum[1] - preview.scene.minimum[1]
     let spanZ = preview.scene.maximum[2] - preview.scene.minimum[2]
+    let centerX = (preview.scene.minimum[0] + preview.scene.maximum[0]) * 0.5'f32
+    let centerY = (preview.scene.minimum[1] + preview.scene.maximum[1]) * 0.5'f32
+    let centerZ = (preview.scene.minimum[2] + preview.scene.maximum[2]) * 0.5'f32
     let aspect = 800.0'f32 / 600.0'f32
     let halfHeight = max(spanY, spanX / aspect) * 0.5'f32
     let fitDistance = max(halfHeight / tan(22.5'f32 * PI.float32 / 180.0'f32),
       8.0'f32)
-    camera.position = Vec3(x: 0.0'f32, y: 0.0'f32,
-      z: spanZ * 0.5'f32 + fitDistance + 2.0'f32)
+    camera.position = Vec3(x: centerX, y: centerY,
+      z: centerZ + spanZ * 0.5'f32 + fitDistance + 2.0'f32)
 
   glEnable(GL_DEPTH_TEST)
   glfwSwapInterval(1)
