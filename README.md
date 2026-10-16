@@ -123,11 +123,14 @@ To include linked chunks, run `--chunk-links` with the same resource path. The o
 .\main.exe --chunk-links ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.sm2"
 ```
 
-The preview follows the paths in SM2 root section 5, appends `.sm2`, and applies each link's `ObjectMatrix` by default to static scenery meshes and RM2 placements. The matrix can be switched to `ChunkMatrix`; an optional zero-based root-link index follows only one neighbor. Static geometry and placements can be shown separately, and a final zero-based index isolates one static mesh or placement:
+The preview follows the paths in SM2 root section 5, appends `.sm2`, and applies each link's `ObjectMatrix` by default to static scenery meshes and RM2 placements. The matrix can be switched to `ChunkMatrix`; an optional zero-based root-link index follows only one neighbor. Static geometry and placements can be shown separately, and a final zero-based index isolates one static mesh or placement. For a depth-0 root-only preview, omit the root-link index before the scene mode:
 
 ```powershell
 # Show only static model candidates from root and root link 0
 .\main.exe --chunk-links ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.sm2" 1 object 0 static
+
+# Isolate static mesh 0 in the root chunk without loading links
+.\main.exe --chunk-links ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.sm2" 0 object static 0
 
 # Isolate static model index 3 in the same linked view
 .\main.exe --chunk-links ".\gamefiles\Crash Twinsanity (v1.00).iso" "Levels\Earth\Cavern\cavent.sm2" 1 object 0 static 3
