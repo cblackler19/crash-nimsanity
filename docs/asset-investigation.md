@@ -129,6 +129,8 @@ The caller then passes the two resulting buffer pointers in `$a1` and `$a2` to t
 
 The installed vtable is at `0x00306100`. Its nonzero entries include methods at `0x002AB9F8`, `0x002A8C58`, `0x002ABA78`, `0x002ABAE0`, and `0x002ABC08`. The method at `0x002A8C58` stores a value at object offset 44 and conditionally calls `0x002B6350` with the object's offset-12 string field. That routine lowercases the name, uses the `HOST0:` prefix string while building a lookup key, and calls `0x002B48E0`. The latter searches a count-and-pointer table using 20-byte record strides, builds a candidate key from each probed entry, and calls a string comparison helper against the requested key. Its result is stored in the object's offset-12 field. This supports interpreting the chain as name normalization and table lookup; it does not establish filesystem access or the role of the other stored name.
 
+During a user-driven area transition in the retail game under PCSX2's debugger on 2026-10-16, the breakpoint at `0x002B6350` coincided with the lowercase path `levels\earth\hub\bossarea.sm2` visible at EE address `0x00D99500`. The subsequent stop at `0x002B48E0` showed `LEVELS\EARTH\HUB\BOSSAREA.SM2` at `0x00D99420`, while the lowercase copy remained at `0x00D99500`. This live memory pair corroborates that the normalization path produces an uppercase key before entering the registry-search routine. Investigation stopped at the lookup entry after stepping its first prologue instruction; the table match, return value, and any ensuing `.BH`/`.BD` read were not observed. The runtime trace therefore does not yet prove that the requested chunk was loaded from the data image.
+
 These call-site observations are consistent with the `.BH` index and `.BD` data being paired, which matches their on-disc lengths and ranges, but do not by themselves prove the exact open/read sequence or all container semantics.
 
 ## RM2 object placements and transforms
@@ -167,7 +169,7 @@ The reported full-scene fan remains unresolved. Filtering shows that combining c
 - Decode per-model transforms and hierarchy for objects whose OGI links reach multiple geometry models; the current preview draws only the first loadable candidate.
 - Validate the combined static and placed scene against recognizable locations in the retail game, then refine coordinate conversion, visibility, and material assignment.
 - Compare candidate ordered material/submodel assignments across more models and establish whether the apparent correspondence holds outside the initial visual sample.
-- Trace how the paired-name object and registry result are consumed after lookup, and determine whether that path reaches file access.
+- At `0x002B48E0`, trace the live table search through the string comparison and capture the returned record/result; then follow its caller to determine whether the result reaches `.BH`/`.BD` access.
 
 ## Community references and licensing
 
