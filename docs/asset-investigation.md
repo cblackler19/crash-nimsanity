@@ -165,6 +165,16 @@ For the same linked candidate, no reported placement-model bound exceeds 1.90 un
 
 The reported full-scene fan remains unresolved. Filtering shows that combining candidates is enough to create viewport-filling output, but does not prove that all those candidates belong in the visible level at once. The next work is to identify which SM2 items are actually placed or visible, resolve each placed object's transform and hierarchy, and compare that composition against a recognizable retail-game view. The scene and camera fit are still experimental, and neither chunk-matrix interpretation has been verified.
 
+### SM2 scenery hierarchy lead
+
+The user reports that Twinsanity Editor's built-in viewer presents the `cavent` chunk's geometry and models coherently. The viewer is primitive, and the user could not find a way to assemble a whole level in it; this is evidence about one chunk only, not a comparison against our linked multi-chunk view.
+
+The editor's MIT-licensed [`TwinsFile.cs`](https://github.com/Smartkin/twinsanity-editor/blob/master/Twinsanity/TwinsFile.cs) routes SM2 root section ID 0 to `SceneryData`, separately from graphics section ID 6 and chunk-link section ID 5. Its [`SceneryData.cs`](https://github.com/Smartkin/twinsanity-editor/blob/master/Twinsanity/Items/SceneryData.cs) reader describes a recursive scenery tree. Tree model records contain model IDs, bounding-box vectors, and four rows of a 4×4 `ModelMatrix`; child node kinds distinguish nested scenery nodes from additional model groups. The repository's root [`LICENSE`](https://github.com/Smartkin/twinsanity-editor/blob/master/LICENSE) is MIT. No editor code was copied.
+
+The local `Levels\Earth\Cavern\cavent.sm2` section table confirms a nonempty root section 0 (3,435 bytes), graphics section 6, and chunk-link section 5. Our current `loadStaticGeometryFromIso` reads only section 6, loads every graphics model-table item, and initializes every model transform to identity. The linked-scene loader later replaces that with the chunk-link transform, but it still does not apply any per-model matrix or select models through section 0's scenery tree. Thus the renderer is drawing the right kind of geometry candidates without yet using the editor-described chunk assembly data.
+
+This is now the leading explanation for the combined-scene fan: missing scenery-tree membership and per-model transforms can make otherwise valid model buffers overlap or appear stretched as the perspective camera moves. It remains a diagnosis to verify, not a proven root cause. The next implementation step is to parse the bounded section-0 tree, resolve its model IDs against section 6, report the matrix-transformed bounds, and then compare a single `cavent` chunk with the editor's view before enabling the composition in linked scenes. The editor's field names and node layout are community-tool classifications; their agreement with the retail sample and resulting visual comparison must be checked locally.
+
 ## Next checks
 
 - Check whether `0xFFFF` is the empty OGI-reference sentinel across more resource chunks and identify any non-sentinel exceptions.
@@ -172,6 +182,7 @@ The reported full-scene fan remains unresolved. Filtering shows that combining c
 - Continue isolating static-model and placement indices in the linked view to identify the instances that contribute to the wedge, then compare their transforms and visibility against the retail game.
 - Decode per-model transforms and hierarchy for objects whose OGI links reach multiple geometry models; the current preview draws only the first loadable candidate.
 - Validate the combined static and placed scene against recognizable locations in the retail game, then refine coordinate conversion, visibility, and material assignment.
+- Parse SM2 section 0's scenery tree and its model matrices, then validate the resulting single-chunk composition against the user's Twinsanity Editor view before changing linked-scene rendering.
 - Compare candidate ordered material/submodel assignments across more models and establish whether the apparent correspondence holds outside the initial visual sample.
 - At `0x002B48E0`, trace the live table search through the string comparison and capture the returned record/result; then follow its caller to determine whether the result reaches `.BH`/`.BD` access.
 
