@@ -91,10 +91,9 @@ proc readF32LE(data: openArray[uint8], offset: int): float32 =
 proc readMatrixRows(data: openArray[uint8], offset, limit: int): Mat4 =
   if offset < 0 or offset > limit - 64 or limit > data.len:
     raise newException(IOError, "Chunk-link matrix exceeds its section")
-  for row in 0 .. 3:
-    for column in 0 .. 3:
-      result[column * 4 + row] = readF32LE(data,
-        offset + (row * 4 + column) * 4)
+  # Link matrices serialize row vectors; OpenGL transforms column vectors.
+  for index in 0 .. 15:
+    result[index] = readF32LE(data, offset + index * 4)
 
 proc skipChunkLinkTree(data: openArray[uint8], cursor: var int, limit: int,
     nodeType: uint32, depth = 0) =
