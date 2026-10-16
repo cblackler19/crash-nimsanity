@@ -84,6 +84,25 @@ proc main() =
           minimum[axis] = min(minimum[axis], vertex.position[axis])
           maximum[axis] = max(maximum[axis], vertex.position[axis])
       echo "Position bounds: ", minimum, " .. ", maximum
+      var nondegenerateTriangles = 0
+      for triangleIndex in 0 ..< model.triangleCount:
+        let first = triangleIndex * 3
+        let a = model.vertices[first].position
+        let b = model.vertices[first + 1].position
+        let c = model.vertices[first + 2].position
+        let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]]
+        let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]]
+        let cross = [
+          ab[1] * ac[2] - ab[2] * ac[1],
+          ab[2] * ac[0] - ab[0] * ac[2],
+          ab[0] * ac[1] - ab[1] * ac[0]
+        ]
+        let areaSquared = cross[0] * cross[0] + cross[1] * cross[1] +
+          cross[2] * cross[2]
+        if areaSquared > 1e-10'f32:
+          inc nondegenerateTriangles
+      echo "Nondegenerate candidate triangles (area² > 1e-10): ",
+        nondegenerateTriangles, " / ", model.triangleCount
   except CatchableError as error:
     quit(error.msg, 1)
 
