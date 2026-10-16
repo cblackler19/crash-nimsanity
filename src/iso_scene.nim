@@ -22,6 +22,7 @@ import iso_model
 import iso_texture
 import ps2_model
 import ps2_texture
+import scenery_section
 
 type
   SectionRange = object
@@ -354,7 +355,7 @@ proc collectArchiveModels(image: IsoImage, dataFile: IsoEntry,
               localModelIds.incl(modelId)
               if modelId notin result.modelPaths:
                 result.modelPaths[modelId] = entry.path
-          elif graphicsSection.id == 3:
+          elif graphicsSection.id == (if isSm2: 6'u32 else: 3'u32):
             let rigidData = image.readSlice(dataFile,
               graphicsOffset + int64(graphicsSection.offset),
               int(graphicsSection.byteLength))
@@ -670,8 +671,13 @@ proc loadPlacementGroupsFromIso(imagePath, resourcePath: string,
   for axis in 0 .. 2:
     result.center[axis] = (result.minimum[axis] + result.maximum[axis]) * 0.5'f32
 
+proc transformPoint(matrix: Mat4, position: array[3, float32]): array[3, float32] =
+  for row in 0 .. 2:
+    result[row] = matrix[row] * position[0] + matrix[4 + row] * position[1] +
+      matrix[8 + row] * position[2] + matrix[12 + row]
+
 proc loadStaticGeometryFromIso*(imagePath, resourcePath: string): ScenePreview =
-  ## Load every SM2 model item without adding inferred transforms.
+  ## Load the SM2 scenery draw list and apply each stored per-item transform.
   if not resourcePath.toLowerAscii().endsWith(".sm2"):
     raise newException(ValueError, "Static geometry preview expects an SM2 resource")
   let image = openIso(imagePath)
@@ -699,13 +705,19 @@ proc loadStaticGeometryFromIso*(imagePath, resourcePath: string): ScenePreview =
   let resourceOffset = int64(resourceEntry.dataOffset)
   let rootSections = readSectionTable(image, dataFile, resourceOffset,
     resourceEntry.dataLength)
+  var sceneryBytes: seq[uint8]
+  var foundScenery = false
   var graphicsSection: SectionRange
   var foundGraphics = false
   for section in rootSections:
-    if section.id == 6:
+    if section.id == 0:
+      sceneryBytes = readSection(image, dataFile, resourceOffset, section)
+      foundScenery = true
+    elif section.id == 6:
       graphicsSection = section
       foundGraphics = true
-      break
+  if not foundScenery:
+    raise newException(IOError, "SM2 scenery section (ID 0) was not found")
   if not foundGraphics:
     raise newException(IOError, "SM2 graphics section (ID 6) was not found")
 
@@ -725,60 +737,109 @@ proc loadStaticGeometryFromIso*(imagePath, resourcePath: string): ScenePreview =
   let modelIds = parseItemIds(modelTable)
   if modelIds.len == 0:
     raise newException(IOError, "SM2 contains no model items")
-  result.staticGeometry = true
-  for modelId in modelIds:
-    try:
-      let model = loadModelFromIso(imagePath, resourcePath, modelId)
-      var sceneModel = SceneModel(
+
+  let scenery = parseScenerySection(sceneryBytes)
+  let archiveModels = collectArchiveModels(image, dataFile, indexData)
+
+  var references: seq[SceneryModelReference]
+  if scenery.hasRoot:
+    references = scenery.modelReferences
+    echo "SM2 scenery tree: ", references.len,
+      " mesh/LOD references, ", modelIds.len, " graphics-table models"
+  else:
+    echo "SM2 has no scenery root; previewing its graphics-table models"
+    for modelId in modelIds:
+      references.add(SceneryModelReference(
         modelId: modelId,
-        modelPath: resourcePath,
-        materialPath: resourcePath,
-        isStaticGeometry: true,
-        modelTransform: identityMatrix(),
-        model: model,
-      )
+        isLod: false,
+        transform: identityMatrix(),
+      ))
+
+  result.staticGeometry = true
+  var loadedModels = initTable[uint32, SceneModel]()
+  var failedModels = initHashSet[uint32]()
+  var skippedLods = 0
+  var unresolvedModels = 0
+  for reference in references:
+    if reference.isLod:
+      inc skippedLods
+      continue
+    let rigidModelId = reference.modelId
+    var geometryModelId = rigidModelId
+    var modelPath = resourcePath
+    if scenery.hasRoot:
+      if rigidModelId notin archiveModels.rigidModels:
+        inc unresolvedModels
+        echo "Scenery rigid-model ID ", rigidModelId,
+          " is absent from the archive rigid-model tables"
+        continue
+      let rigidLocation = archiveModels.rigidModels[rigidModelId]
+      geometryModelId = rigidLocation.geometryModelId
+      modelPath = rigidLocation.resourcePath
+
+    if geometryModelId in failedModels:
+      continue
+    if geometryModelId notin loadedModels:
       try:
-        let textureLink = findTextureForModelFromIso(imagePath, resourcePath,
-          modelId)
-        sceneModel.textureId = textureLink.textureId
-        sceneModel.texture = loadTextureFromIso(imagePath, resourcePath,
-          textureLink.textureId)
-        sceneModel.hasTexture = true
-        echo "SM2 model ", modelId, ": ", model.submodelCount,
-          " submodels, ", model.triangleCount, " candidate triangles, texture ",
-          textureLink.textureId
+        let model = loadModelFromIso(imagePath, modelPath, geometryModelId)
+        var sceneModel = SceneModel(
+          modelId: geometryModelId,
+          modelPath: modelPath,
+          materialPath: modelPath,
+          isStaticGeometry: true,
+          modelTransform: identityMatrix(),
+          model: model,
+        )
+        try:
+          let textureLink = findTextureForModelFromIso(imagePath, modelPath,
+            geometryModelId)
+          sceneModel.textureId = textureLink.textureId
+          sceneModel.texture = loadTextureFromIso(imagePath, modelPath,
+            textureLink.textureId)
+          sceneModel.hasTexture = true
+          echo "SM2 scenery rigid model ", rigidModelId, " -> geometry ",
+            geometryModelId, ": ", model.submodelCount,
+            " submodels, ", model.triangleCount,
+            " candidate triangles, texture ", textureLink.textureId
+        except CatchableError as error:
+          echo "SM2 geometry model ", geometryModelId,
+            " has no resolving texture; drawing decoded vertex colors: ",
+            error.msg
+        loadedModels[geometryModelId] = sceneModel
       except CatchableError as error:
-        echo "SM2 model ", modelId,
-          " has no resolving texture; drawing decoded vertex colors: ",
-          error.msg
+        failedModels.incl(geometryModelId)
+        echo "Skipping SM2 geometry model ", geometryModelId, ": ", error.msg
+
+    if geometryModelId in loadedModels:
+      var sceneModel = loadedModels[geometryModelId]
+      sceneModel.modelTransform = reference.transform
       result.models.add(sceneModel)
-    except CatchableError as error:
-      echo "Skipping SM2 model ", modelId, ": ", error.msg
+
+  echo "SM2 scenery instances: ", result.models.len,
+    " drawable meshes, ", skippedLods, " LOD entries skipped, ",
+    unresolvedModels, " unresolved mesh IDs"
 
   if result.models.len == 0:
-    raise newException(IOError, "No SM2 models could be loaded")
+    raise newException(IOError, "No SM2 scenery meshes could be loaded")
 
   var hasBounds = false
   for sceneModel in result.models:
     for vertex in sceneModel.model.vertices:
+      let worldPosition = transformPoint(sceneModel.modelTransform,
+        vertex.position)
       if not hasBounds:
         for axis in 0 .. 2:
-          result.minimum[axis] = vertex.position[axis]
-          result.maximum[axis] = vertex.position[axis]
+          result.minimum[axis] = worldPosition[axis]
+          result.maximum[axis] = worldPosition[axis]
         hasBounds = true
       else:
         for axis in 0 .. 2:
-          result.minimum[axis] = min(result.minimum[axis], vertex.position[axis])
-          result.maximum[axis] = max(result.maximum[axis], vertex.position[axis])
+          result.minimum[axis] = min(result.minimum[axis], worldPosition[axis])
+          result.maximum[axis] = max(result.maximum[axis], worldPosition[axis])
   if not hasBounds:
-    raise newException(IOError, "Loaded SM2 models contain no triangle vertices")
+    raise newException(IOError, "Loaded SM2 scenery has no triangle vertices")
   for axis in 0 .. 2:
     result.center[axis] = (result.minimum[axis] + result.maximum[axis]) * 0.5'f32
-
-proc transformPoint(matrix: Mat4, position: array[3, float32]): array[3, float32] =
-  for row in 0 .. 2:
-    result[row] = matrix[row] * position[0] + matrix[4 + row] * position[1] +
-      matrix[8 + row] * position[2] + matrix[12 + row]
 
 proc placementLocalTransform(placement: ScenePlacement): Mat4 =
   let angleScale = 2.0'f32 * PI.float32 / 65536.0'f32
@@ -884,9 +945,11 @@ proc loadLinkedChunkGeometryFromIso*(imagePath, resourcePath: string,
       " at link depth ", current.depth
     for sceneModel in chunk.models:
       var placedModel = sceneModel
-      placedModel.modelTransform = current.transform
+      placedModel.modelTransform = multiply(current.transform,
+        sceneModel.modelTransform)
       for vertex in placedModel.model.vertices:
-        let worldPosition = transformPoint(current.transform, vertex.position)
+        let worldPosition = transformPoint(placedModel.modelTransform,
+          vertex.position)
         if not hasBounds:
           for axis in 0 .. 2:
             result.minimum[axis] = worldPosition[axis]
