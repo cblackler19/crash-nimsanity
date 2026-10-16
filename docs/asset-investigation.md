@@ -167,6 +167,8 @@ The user isolated the latest linked-view artifacts to static model 2328767264 fr
 
 The render loop now uses conservative camera-frustum culling for loaded scene meshes and placements. It derives a local AABB from each decoded mesh's vertices, transforms its eight corners into clip space each frame, and skips a draw only when every corner lies beyond the same one of the six OpenGL clip planes. This prevents off-screen linked geometry from being submitted while the camera moves, but it is only a renderer optimization: it does not use the retail scenery octree bounds, select LODs, or decide which linked chunks and portals should be visible.
 
+The linked-resource traversal now treats a resource path plus its composed transform as an instance identity. The former path-only visited set could suppress another placement of the same SM2 at a different transform. Near-identical transforms (within `1e-4` per matrix component) still collapse to prevent repeated traversal around cycles. This allows distinct transformed instances to appear in the preview, but it does not prove that every resulting instance is simultaneously visible in the retail game; link hull and portal rules remain unimplemented.
+
 ### SM2 scenery hierarchy lead
 
 The user reports that Twinsanity Editor's built-in viewer presents the `cavent` chunk's geometry and models coherently. The viewer is primitive, and the user could not find a way to assemble a whole level in it; this is evidence about one chunk only, not a comparison against our linked multi-chunk view.
