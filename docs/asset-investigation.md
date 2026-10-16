@@ -175,6 +175,12 @@ The local `Levels\Earth\Cavern\cavent.sm2` section table confirms a nonempty roo
 
 This is now the leading explanation for the combined-scene fan: missing scenery-tree membership and per-model transforms can make otherwise valid model buffers overlap or appear stretched as the perspective camera moves. It remains a diagnosis to verify, not a proven root cause. The next implementation step is to parse the bounded section-0 tree, resolve its model IDs against section 6, report the matrix-transformed bounds, and then compare a single `cavent` chunk with the editor's view before enabling the composition in linked scenes. The editor's field names and node layout are community-tool classifications; their agreement with the retail sample and resulting visual comparison must be checked locally.
 
+The user's additional references reinforce that scene composition is the next missing layer. Smartkin's GPL-3.0 [`TT-Lab`](https://github.com/Smartkin/TT-Lab) describes a level viewport that places objects, chunk links, triggers, lights, particles, and cameras and draws game-style materials, lighting, and skies. This is a stronger target for a later whole-level visual comparison than the older editor's primitive chunk viewer. Its README also says the separate `twinstudio` downloads are music/video tools, so the linked `twinstudio` repository needs separate inspection before treating it as renderer evidence. No TT-Lab code was copied.
+
+The user's [`Crash-Twinsanity-Windows`](https://github.com/GioPixelGH/Crash-Twinsanity-Windows) reference describes itself as a native port of the original C++ decompilation, including an emulated PS2 GS/VIF/VU renderer. It can serve as a runtime reference, but it is not an independent asset-viewer implementation. The related [`Graphics` research notes](https://alexmollard.github.io/Crash-Twinsanity-Improved/engine/graphics) report chunk-scoped draw lists/DMA slots for shadows and that lighting data lives in `.SM2`; these are additional signs that a retail scene is organized by chunk and render records rather than by drawing every graphics-table model item indiscriminately. They do not establish which Cavent models are visible or the exact SM2 matrix order.
+
+Taken together, the camera itself is no longer the leading suspect: the loop recomputes view/projection uniforms and issues independent draws, while the input data path ignores the SM2 scenery tree and its transforms. The visible fan can still be camera-sensitive because perspective exposes bad overlap/placement, but that remains an inference pending rendering the section-0 hierarchy.
+
 ## Next checks
 
 - Check whether `0xFFFF` is the empty OGI-reference sentinel across more resource chunks and identify any non-sentinel exceptions.
@@ -183,6 +189,7 @@ This is now the leading explanation for the combined-scene fan: missing scenery-
 - Decode per-model transforms and hierarchy for objects whose OGI links reach multiple geometry models; the current preview draws only the first loadable candidate.
 - Validate the combined static and placed scene against recognizable locations in the retail game, then refine coordinate conversion, visibility, and material assignment.
 - Parse SM2 section 0's scenery tree and its model matrices, then validate the resulting single-chunk composition against the user's Twinsanity Editor view before changing linked-scene rendering.
+- Use TT-Lab's level viewport or the native Windows port as a reference only after the section-0 single-chunk composition is implemented; compare at least one known Cavent camera position.
 - Compare candidate ordered material/submodel assignments across more models and establish whether the apparent correspondence holds outside the initial visual sample.
 - At `0x002B48E0`, trace the live table search through the string comparison and capture the returned record/result; then follow its caller to determine whether the result reaches `.BH`/`.BD` access.
 
